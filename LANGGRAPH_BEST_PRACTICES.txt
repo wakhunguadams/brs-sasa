@@ -1,0 +1,351 @@
+# LangGraph Best Practices for Building AI Agents & Agentic RAG Systems
+
+## Table of Contents
+1. [Introduction](#introduction)
+2. [State Management](#state-management)
+3. [Node Design Patterns](#node-design-patterns)
+4. [Graph Flow Patterns](#graph-flow-patterns)
+5. [Agentic RAG Implementation](#agentic-rag-implementation)
+6. [Error Handling](#error-handling)
+7. [Testing Strategies](#testing-strategies)
+8. [Performance Optimization](#performance-optimization)
+
+## Introduction
+
+LangGraph is a powerful framework for building stateful, multi-step AI applications. It excels at creating agentic systems that can reason, plan, and execute complex tasks. This guide covers the latest best practices for building AI agents and Agentic RAG systems using LangGraph.
+
+## State Management
+
+### 1. Use Explicit State Schemas with TypedDict
+```python
+from typing import Annotated, TypedDict
+from langgraph.graph.message import add_messages
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages]  # For accumulating messages
+    documents: list[str]  # Retrieved documents
+    counter: Annotated[int, lambda x, y: x + y]  # For incrementing counters
+    query: str  # Current query
+    response: str  # Generated response
+    error_count: int  # Track errors
+    max_steps: int  # Prevent infinite loops
+```
+
+### 2. Annotate Fields with Reducer Functions
+Reducer functions define how state updates should be merged:
+- `add_messages`: For appending new messages to existing message lists
+- `lambda x, y: x + y`: For numeric values that should be accumulated
+- `lambda x, y: list(set(x + y))`: For deduplicating lists
+
+### 3. Keep State Minimal and Typed
+- Only store what's needed across nodes
+- Use type hints for better IDE support and validation
+- Avoid storing temporary values in state
+
+### 4. Immutability Mindset
+Treat each node like a pure function that returns a partial state update:
+```python
+def process_node(state: AgentState) -> dict:
+    # Process state and return only the changes
+    return {"response": "processed response", "counter": state.get("counter", 0) + 1}
+```
+
+## Node Design Patterns
+
+### 1. Pure Function Approach
+Each node should be a pure function that takes state and returns partial updates:
+```python
+async def rag_agent_node(state: AgentState) -> dict:
+    query = state["query"]
+    # Process query
+    return {
+        "response": result,
+        "documents": retrieved_docs,
+        "current_agent": "rag_agent"
+    }
+```
+
+### 2. Input Validation
+Validate inputs at node boundaries:
+```python
+def validate_node(state: AgentState) -> dict:
+    if not state.get("query"):
+        return {"error": "Query is required"}
+    return {"status": "valid"}
+```
+
+### 3. Error Handling in Nodes
+Wrap node logic in try-catch blocks:
+```python
+async def safe_node(state: AgentState) -> dict:
+    try:
+        # Node logic here
+        return {"result": "success"}
+    except Exception as e:
+        return {
+            "error": str(e),
+            "error_count": state.get("error_count", 0) + 1
+        }
+```
+
+## Graph Flow Patterns
+
+### 1. Simple vs Conditional Edges
+Use simple edges for linear flows:
+```python
+workflow.add_edge("node_a", "node_b")
+```
+
+Use conditional edges when behavior branches:
+```python
+def route(state: AgentState) -> str:
+    if state["query_type"] == "knowledge":
+        return "rag_agent"
+    return "conversation_agent"
+
+workflow.add_conditional_edges(
+    "classifier", 
+    route,
+    {"rag_agent": "rag_agent", "conversation_agent": "conversation_agent"}
+)
+```
+
+### 2. Supervisor → Specialist Pattern
+Use a supervisor to delegate to specialists:
+```python
+def supervisor_node(state: AgentState) -> dict:
+    # Classify and route to appropriate specialist
+    intent = classify_intent(state["query"])
+    return {"next_agent": intent}
+
+SPECIALISTS = {"search": "search_agent", "chat": "chat_agent"}
+
+def route_to_specialist(state: AgentState) -> str:
+    intent = state["next_agent"]
+    return SPECIALISTS.get(intent, "chat_agent")
+```
+
+### 3. Cycle Management
+Add guardrails to prevent infinite loops:
+```python
+def should_continue(state: AgentState) -> str:
+    if state.get("error_count", 0) >= state.get("max_steps", 5):
+        return "halt"
+    return "continue"
+```
+
+### 4. Parallel Processing with Send API
+For running multiple tasks simultaneously:
+```python
+from langgraph.graph import Send
+
+def fanout_node(state: AgentState) -> list[Send]:
+    tasks = state.get("tasks", [])
+    return [Send("worker", {"task": t}) for t in tasks]
+```
+
+## Agentic RAG Implementation
+
+### 1. Multi-Hop Retrieval
+Implement iterative retrieval for complex queries:
+```python
+async def multi_hop_rag_node(state: AgentState) -> dict:
+    query = state["query"]
+    all_docs = []
+    
+    # First retrieval
+    docs = await retriever.ainvoke(query)
+    all_docs.extend(docs)
+    
+    # Generate follow-up queries based on initial results
+    follow_up_queries = await generate_follow_ups(query, docs)
+    
+    for q in follow_up_queries:
+        additional_docs = await retriever.ainvoke(q)
+        all_docs.extend(additional_docs)
+    
+    return {"documents": all_docs}
+```
+
+### 2. Query Transformation Techniques
+Implement various query transformation strategies:
+- **Step-back prompting**: Abstract the query to broader concepts
+- **HyDE (Hypothetical Document Embeddings)**: Generate hypothetical answers for better retrieval
+- **Decomposition**: Break complex queries into simpler sub-queries
+
+### 3. Verification and Grounding
+Verify responses against retrieved documents:
+```python
+async def verify_response_node(state: AgentState) -> dict:
+    response = state["response"]
+    documents = state["documents"]
+    
+    # Check if response is supported by documents
+    verification = await verifier.ainvoke({
+        "response": response,
+        "documents": documents
+    })
+    
+    if not verification.supported:
+        return {"needs_revision": True, "verification": verification}
+    
+    return {"verification_passed": True}
+```
+
+### 4. Self-RAG Pattern
+Implement reflection and critique capabilities:
+```python
+async def self_rag_node(state: AgentState) -> dict:
+    response = state["response"]
+    
+    # Critique the response
+    critique = await critic.ainvoke(response)
+    
+    if critique.needs_revision:
+        # Revise response based on critique
+        revised_response = await reviser.ainvoke({
+            "original_response": response,
+            "critique": critique
+        })
+        return {"response": revised_response, "was_revised": True}
+    
+    return {"response": response, "was_revised": False}
+```
+
+## Error Handling
+
+### 1. Multi-Level Error Handling
+Handle errors at different levels:
+- Node level: Individual node error handling
+- Graph level: Graph-wide error handling
+- Application level: Top-level exception handling
+
+### 2. Graceful Degradation
+Implement fallback mechanisms:
+```python
+async def resilient_rag_node(state: AgentState) -> dict:
+    try:
+        # Primary RAG approach
+        result = await primary_rag_process(state)
+        return result
+    except RetrievalError:
+        # Fallback to simpler retrieval
+        try:
+            fallback_result = await simple_rag_process(state)
+            return {**fallback_result, "used_fallback": True}
+        except Exception as e:
+            # Ultimate fallback
+            return {
+                "response": "I'm having trouble accessing our knowledge base right now. Please try again later.",
+                "error": str(e)
+            }
+```
+
+### 3. Retry Policies
+Implement exponential backoff for transient failures:
+```python
+import asyncio
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+async def robust_llm_call(prompt: str):
+    return await llm.ainvoke(prompt)
+```
+
+## Testing Strategies
+
+### 1. End-to-End Graph Testing
+Test the entire graph flow:
+```python
+async def test_complete_flow():
+    initial_state = {
+        "messages": [HumanMessage(content="Hello")],
+        "query": "Hello",
+        "documents": [],
+        "max_steps": 10
+    }
+    
+    result = await workflow.ainvoke(initial_state)
+    
+    # Assert expected outcomes
+    assert "response" in result
+    assert len(result["messages"]) > 1
+```
+
+### 2. Node-Level Testing
+Test individual nodes in isolation:
+```python
+async def test_rag_node():
+    state = {"query": "What is AI?", "documents": []}
+    result = await rag_agent_node(state)
+    
+    assert "response" in result
+    assert "documents" in result
+```
+
+### 3. Mock External Dependencies
+Use mocks for LLMs and external services:
+```python
+from unittest.mock import AsyncMock
+
+async def test_with_mocked_llm():
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke.return_value = "Mocked response"
+    
+    # Inject mock into node
+    result = await node_with_llm(state, llm=mock_llm)
+    
+    assert result["response"] == "Mocked response"
+```
+
+## Performance Optimization
+
+### 1. Caching Strategies
+Cache expensive operations:
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=128)
+def cached_embedding(text: str):
+    return embedder.embed_query(text)
+```
+
+### 2. Asynchronous Operations
+Use async/await for I/O-bound operations:
+```python
+async def async_retrieval(query: str):
+    # All I/O operations should be async
+    docs = await retriever.ainvoke(query)
+    return docs
+```
+
+### 3. Batch Processing
+Batch similar operations when possible:
+```python
+async def batch_embed(queries: list[str]):
+    # Process multiple embeddings in a single call
+    return await embedder.aembed_documents(queries)
+```
+
+### 4. Memory Management
+Monitor and manage memory usage in long-running conversations:
+```python
+def trim_conversation_history(state: AgentState, max_length: int = 10) -> dict:
+    messages = state.get("messages", [])
+    if len(messages) > max_length:
+        # Keep recent messages, summarize older ones
+        recent = messages[-max_length:]
+        return {"messages": recent}
+    return {}
+```
+
+## Key Takeaways
+
+1. **State is King**: Design your state schema carefully—it's the backbone of your agent
+2. **Nodes as Pure Functions**: Keep nodes focused and return only state changes
+3. **Plan for Errors**: Build resilience into every layer of your system
+4. **Test Thoroughly**: Test both individual components and end-to-end flows
+5. **Monitor Performance**: Keep an eye on latency, token usage, and memory consumption
+6. **Iterate and Improve**: Start simple and add complexity only when needed
+
+By following these practices, you'll build robust, scalable, and maintainable agentic RAG systems with LangGraph.

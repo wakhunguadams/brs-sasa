@@ -1,0 +1,88 @@
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Documentation
+docs/_build/
+
+# Logs
+*.log
+logs/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Local configuration
+config/local.py
+
+# Database
+*.db
+*.db-journal
+
+# Chroma data
+chroma_data/
+
+# Data files
+data/
+
+# UI specific
+.streamlit/
+
+# Coverage reports
+.coverage
+htmlcov/
+
+# Process files
+*.pid
+*.seed
+*.pid.lock
+
+# Testing
+.pytest_cache/
+.hypothesis/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets
+secrets/
+credentials.json
+*.key
+*.pem
