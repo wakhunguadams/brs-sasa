@@ -16,8 +16,11 @@ class KnowledgeBaseManager:
     storage in vector database, and retrieval for RAG operations
     """
     
-    def __init__(self):
-        self.document_processor = DocumentProcessor()
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
+        self.document_processor = DocumentProcessor(
+            chunk_size=chunk_size, 
+            chunk_overlap=chunk_overlap
+        )
         self.vector_db_manager = VectorDBManager(db_type=settings.VECTOR_DB_TYPE)
         self.initialized = False
     
@@ -33,24 +36,28 @@ class KnowledgeBaseManager:
     async def ingest_documents_from_directory(self, directory_path: str):
         """
         Ingest all documents from a directory into the knowledge base
+        Documents are automatically chunked for better retrieval
         """
         if not self.initialized:
             await self.initialize()
         
         try:
-            # Load documents from directory
-            logger.info(f"Loading documents from {directory_path}")
-            documents = self.document_processor.load_documents_from_directory(directory_path)
+            # Load and chunk documents from directory
+            logger.info(f"Loading and chunking documents from {directory_path}")
+            documents = self.document_processor.load_documents_from_directory(
+                directory_path, 
+                chunk=True
+            )
             
             if not documents:
                 logger.warning(f"No documents found in {directory_path}")
                 return []
             
             # Add documents to vector database
-            logger.info(f"Adding {len(documents)} documents to vector database")
+            logger.info(f"Adding {len(documents)} document chunks to vector database")
             doc_ids = await self.vector_db_manager.add_documents(documents)
             
-            logger.info(f"Successfully ingested {len(documents)} documents into knowledge base")
+            logger.info(f"Successfully ingested {len(documents)} document chunks into knowledge base")
             return doc_ids
         except Exception as e:
             logger.error(f"Error ingesting documents from {directory_path}: {str(e)}")
@@ -59,18 +66,23 @@ class KnowledgeBaseManager:
     async def ingest_single_document(self, file_path: str):
         """
         Ingest a single document into the knowledge base
+        Document is automatically chunked for better retrieval
         """
         if not self.initialized:
             await self.initialize()
         
         try:
-            # Load the document
-            logger.info(f"Loading document: {file_path}")
-            document = self.document_processor.load_document(file_path)
+            # Load and chunk the document
+            logger.info(f"Loading and chunking document: {file_path}")
+            chunked_docs = self.document_processor.load_and_chunk_document(file_path)
             
-            # Add to vector database
-            logger.info(f"Adding document to vector database: {file_path}")
-            doc_ids = await self.vector_db_manager.add_documents([document])
+            if not chunked_docs:
+                logger.warning(f"No content extracted from {file_path}")
+                return None
+            
+            # Add chunks to vector database
+            logger.info(f"Adding {len(chunked_docs)} chunks to vector database: {file_path}")
+            doc_ids = await self.vector_db_manager.add_documents(chunked_docs)
             
             logger.info(f"Successfully ingested document: {file_path}")
             return doc_ids[0] if doc_ids else None

@@ -1,202 +1,389 @@
+"""
+BRS-SASA Demo UI - Production-Ready Streamlit Interface
+Features: Streaming responses, conversation management, modern design
+"""
 import streamlit as st
-import asyncio
 import httpx
+import json
 import uuid
-from typing import Dict, Any
+from typing import Optional
+from datetime import datetime
 
-# Set page config
+# Page configuration
 st.set_page_config(
-    page_title="BRS-SASA: AI-Powered Business Registration Assistant",
+    page_title="BRS-SASA: AI Business Registration Assistant",
     page_icon="🏛️",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Initialize session state
+# API Configuration
+API_BASE_URL = "http://localhost:8000/api/v1/chat"
+
+# Session state initialization
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "conversation_id" not in st.session_state:
-    st.session_state.conversation_id = str(uuid.uuid4())
+    st.session_state.conversation_id = None
+if "streaming_enabled" not in st.session_state:
+    st.session_state.streaming_enabled = True
 
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        text-align: center;
-        color: #1f4e79;
-        margin-bottom: 2rem;
-    }
-    .sub-header {
-        text-align: center;
-        color: #555;
-        margin-bottom: 2rem;
-    }
-    .user-message {
-        background-color: #e3f2fd;
-        padding: 10px;
-        border-radius: 8px;
-        margin: 10px 0;
-        border-left: 4px solid #2196f3;
-    }
-    .assistant-message {
-        background-color: #f5f5f5;
-        padding: 10px;
-        border-radius: 8px;
-        margin: 10px 0;
-        border-left: 4px solid #4caf50;
-    }
-    .source-box {
-        background-color: #fff3e0;
-        padding: 8px;
-        border-radius: 4px;
-        margin-top: 5px;
-        font-size: 0.9em;
-    }
-    .confidence-box {
-        background-color: #e8f5e9;
-        padding: 5px;
-        border-radius: 4px;
-        display: inline-block;
-        margin-top: 5px;
-        font-size: 0.8em;
-    }
-</style>
-""", unsafe_allow_html=True)
 
-# Header
-st.markdown('<h1 class="main-header">🏛️ BRS-SASA: AI-Powered Business Registration Assistant</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Your intelligent assistant for Kenyan Business Registration Service (BRS) queries</p>', unsafe_allow_html=True)
+# ============================================
+# API Functions
+# ============================================
 
-# Initialize API client
-async def get_ai_response(message: str, history: list) -> Dict[str, Any]:
-    """
-    Get response from the BRS-SASA backend API
-    """
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            response = await client.post(
-                "http://localhost:8000/api/v1/chat/",
+def create_conversation(title: Optional[str] = None, system_message: Optional[str] = None) -> dict:
+    """Create a new conversation via API."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.post(
+                f"{API_BASE_URL}/conversations",
                 json={
-                    "message": message,
-                    "history": history,
-                    "provider": "gemini"
+                    "title": title,
+                    "system_message": system_message
                 }
             )
             response.raise_for_status()
             return response.json()
-        except httpx.RequestError as e:
-            return {
-                "response": f"Error connecting to the API: {str(e)}",
-                "sources": [],
-                "confidence": 0.0
+    except Exception as e:
+        st.error(f"Failed to create conversation: {e}")
+        return None
+
+
+def send_message(messages: list, conversation_id: Optional[str] = None, stream: bool = False) -> dict:
+    """Send a message and get response."""
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            payload = {
+                "messages": messages,
+                "conversation_id": conversation_id,
+                "stream": False,  # We handle streaming separately
+                "provider": "gemini"
             }
-        except httpx.HTTPStatusError as e:
-            return {
-                "response": f"API returned an error: {e.response.status_code}",
-                "sources": [],
-                "confidence": 0.0
+            
+            response = client.post(
+                f"{API_BASE_URL}/completions",
+                json=payload,
+                headers={"X-Request-ID": f"ui-{uuid.uuid4().hex[:8]}"}
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.TimeoutException:
+        return {"error": "Request timed out. Please try again."}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def send_message_streaming(messages: list, conversation_id: Optional[str] = None):
+    """Send a message with SSE streaming."""
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            payload = {
+                "messages": messages,
+                "conversation_id": conversation_id,
+                "stream": True,
+                "provider": "gemini"
             }
-
-# Display chat messages
-for message in st.session_state.messages:
-    with st.container():
-        if message["role"] == "user":
-            st.markdown(f'<div class="user-message"><strong>You:</strong> {message["content"]}</div>', 
-                       unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="assistant-message"><strong>🤖 BRS-SASA:</strong> {message["content"]}</div>', 
-                       unsafe_allow_html=True)
             
-            # Show sources and confidence if available
-            if message.get("sources"):
-                sources_text = ", ".join(message["sources"][:3])  # Limit to first 3 sources
-                if len(message["sources"]) > 3:
-                    sources_text += f" and {len(message['sources']) - 3} more"
-                st.markdown(f'<div class="source-box"><strong>Sources:</strong> {sources_text}</div>', 
-                           unsafe_allow_html=True)
-            
-            if "confidence" in message and message["confidence"] > 0:
-                confidence_pct = message["confidence"] * 100
-                st.markdown(f'<div class="confidence-box">Confidence: {confidence_pct:.1f}%</div>', 
-                           unsafe_allow_html=True)
+            with client.stream(
+                "POST",
+                f"{API_BASE_URL}/completions",
+                json=payload,
+                headers={"Accept": "text/event-stream"}
+            ) as response:
+                response.raise_for_status()
+                
+                full_content = ""
+                sources = []
+                confidence = 0.0
+                conv_id = conversation_id
+                
+                for line in response.iter_lines():
+                    if line.startswith("data: "):
+                        data = line[6:]  # Remove "data: " prefix
+                        
+                        if data == "[DONE]":
+                            break
+                        
+                        try:
+                            chunk = json.loads(data)
+                            
+                            # Extract content from delta
+                            if "choices" in chunk and chunk["choices"]:
+                                delta = chunk["choices"][0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    full_content += content
+                                    yield {"type": "content", "content": content}
+                            
+                            # Extract metadata from final chunk
+                            if chunk.get("sources"):
+                                sources = chunk["sources"]
+                            if chunk.get("confidence"):
+                                confidence = chunk["confidence"]
+                            if chunk.get("conversation_id"):
+                                conv_id = chunk["conversation_id"]
+                                
+                        except json.JSONDecodeError:
+                            continue
+                
+                # Yield final metadata
+                yield {
+                    "type": "done",
+                    "content": full_content,
+                    "sources": sources,
+                    "confidence": confidence,
+                    "conversation_id": conv_id
+                }
+                
+    except Exception as e:
+        yield {"type": "error", "error": str(e)}
 
-# Input section
-st.markdown("---")
-input_container = st.container()
 
-with input_container:
-    col1, col2 = st.columns([4, 1])
-    
-    with col1:
-        user_input = st.text_input("Ask about business registration, laws, or procedures:", 
-                                  placeholder="e.g., How do I register a company in Kenya?")
-    
-    with col2:
-        send_button = st.button("Send", type="primary")
+# ============================================
+# UI Components
+# ============================================
 
-# Handle user input
-if send_button and user_input.strip():
-    # Add user message to history
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    
-    # Get AI response
-    with st.spinner("Thinking..."):
-        # Convert session state messages to the format expected by the API
-        history = [{"role": m["role"], "content": m["content"]} 
-                  for m in st.session_state.messages[:-1]]  # Exclude current message
+def render_header():
+    """Render the application header."""
+    st.markdown("""
+    <div style="text-align: center; padding: 1rem 0;">
+        <h1 style="color: #1f4e79; margin-bottom: 0.5rem;">
+            🏛️ BRS-SASA
+        </h1>
+        <p style="color: #666; font-size: 1.1rem;">
+            AI-Powered Business Registration Assistant for Kenya
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_sidebar():
+    """Render the sidebar with controls and info."""
+    with st.sidebar:
+        st.header("⚙️ Settings")
         
-        response_data = asyncio.run(get_ai_response(user_input, history))
+        # Streaming toggle
+        st.session_state.streaming_enabled = st.toggle(
+            "Enable Streaming",
+            value=st.session_state.streaming_enabled,
+            help="Stream responses in real-time"
+        )
+        
+        st.divider()
+        
+        # Conversation controls
+        st.header("💬 Conversation")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🆕 New Chat", use_container_width=True):
+                st.session_state.messages = []
+                st.session_state.conversation_id = None
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear", use_container_width=True):
+                st.session_state.messages = []
+                st.rerun()
+        
+        if st.session_state.conversation_id:
+            st.caption(f"ID: `{st.session_state.conversation_id[:12]}...`")
+        
+        st.divider()
+        
+        # Quick queries
+        st.header("📋 Quick Questions")
+        
+        quick_queries = [
+            "How do I register a company in Kenya?",
+            "What are the registration fees?",
+            "Can foreigners own companies?",
+            "What documents are required?",
+            "How long does registration take?",
+            "What are BRS contact details?"
+        ]
+        
+        for query in quick_queries:
+            if st.button(query, key=f"quick_{hash(query)}", use_container_width=True):
+                return query  # Return the query to be processed
+        
+        st.divider()
+        
+        # About section
+        st.header("ℹ️ About")
+        st.markdown("""
+        **BRS-SASA** uses AI to help you understand:
+        - Company registration processes
+        - Legal requirements & documents
+        - Fees and timelines
+        - Contact information
+        
+        *Powered by LangGraph & Gemini 2.0*
+        """)
+        
+        # API Status
+        st.divider()
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                response = client.get("http://localhost:8000/api/v1/health/")
+                if response.status_code == 200:
+                    st.success("🟢 API Connected")
+                else:
+                    st.warning("🟡 API Degraded")
+        except:
+            st.error("🔴 API Offline")
     
-    # Add AI response to history
-    ai_response = {
-        "role": "assistant", 
-        "content": response_data.get("response", "Sorry, I couldn't process that request."),
-        "sources": response_data.get("sources", []),
-        "confidence": response_data.get("confidence", 0.0)
-    }
-    st.session_state.messages.append(ai_response)
-    
-    # Rerun to display the new messages
-    st.rerun()
+    return None
 
-elif user_input and not send_button:
-    # If user pressed Enter without clicking button, simulate button click
-    pass
 
-# Sidebar with information
-with st.sidebar:
-    st.header("ℹ️ About BRS-SASA")
-    st.write("""
-    BRS-SASA is an AI-powered conversational platform for the 
-    Business Registration Service (BRS) of Kenya.
+def render_message(role: str, content: str, sources: list = None, confidence: float = None):
+    """Render a single message."""
+    with st.chat_message(role, avatar="👤" if role == "user" else "🤖"):
+        st.markdown(content)
+        
+        if role == "assistant" and (sources or confidence):
+            cols = st.columns([3, 1])
+            
+            with cols[0]:
+                if sources and len(sources) > 0:
+                    sources_display = ", ".join(sources[:3])
+                    if len(sources) > 3:
+                        sources_display += f" +{len(sources) - 3} more"
+                    st.caption(f"📚 Sources: {sources_display}")
+            
+            with cols[1]:
+                if confidence and confidence > 0:
+                    st.caption(f"✅ {confidence * 100:.0f}% confident")
+
+
+def render_chat_history():
+    """Render the chat message history."""
+    for msg in st.session_state.messages:
+        render_message(
+            msg["role"],
+            msg["content"],
+            msg.get("sources"),
+            msg.get("confidence")
+        )
+
+
+def process_user_input(user_input: str):
+    """Process user input and get AI response."""
+    if not user_input.strip():
+        return
     
-    **Capabilities:**
-    - Answer FAQs about registration processes
-    - Explain legal documents in plain language
-    - Provide registration requirements and fees
-    - Compare Kenyan laws with international jurisdictions
-    - Collect public feedback on draft legislation
-    """)
+    # Add user message to history
+    st.session_state.messages.append({
+        "role": "user",
+        "content": user_input
+    })
     
-    st.header("📋 Common Queries")
-    common_queries = [
-        "How do I register a business name?",
-        "What are the requirements for a private limited company?",
-        "How much does company registration cost?",
-        "What documents do I need for LLP registration?",
-        "How long does the registration process take?"
+    # Display user message
+    with st.chat_message("user", avatar="👤"):
+        st.markdown(user_input)
+    
+    # Build messages for API
+    api_messages = [
+        {"role": msg["role"], "content": msg["content"]}
+        for msg in st.session_state.messages
     ]
     
-    for query in common_queries:
-        if st.button(query, key=f"query_{query}"):
-            st.session_state.messages.append({"role": "user", "content": query})
-            st.rerun()
+    # Get AI response
+    with st.chat_message("assistant", avatar="🤖"):
+        if st.session_state.streaming_enabled:
+            # Streaming response
+            message_placeholder = st.empty()
+            full_response = ""
+            sources = []
+            confidence = 0.0
+            
+            for chunk in send_message_streaming(
+                api_messages,
+                st.session_state.conversation_id
+            ):
+                if chunk["type"] == "content":
+                    full_response += chunk["content"]
+                    message_placeholder.markdown(full_response + "▌")
+                elif chunk["type"] == "done":
+                    full_response = chunk["content"]
+                    sources = chunk.get("sources", [])
+                    confidence = chunk.get("confidence", 0.0)
+                    st.session_state.conversation_id = chunk.get("conversation_id")
+                elif chunk["type"] == "error":
+                    st.error(f"Error: {chunk['error']}")
+                    return
+            
+            message_placeholder.markdown(full_response)
+            
+        else:
+            # Non-streaming response
+            with st.spinner("Thinking..."):
+                response = send_message(
+                    api_messages,
+                    st.session_state.conversation_id
+                )
+            
+            if "error" in response:
+                st.error(f"Error: {response['error']}")
+                return
+            
+            # Extract response data
+            full_response = response["choices"][0]["message"]["content"]
+            sources = response.get("sources", [])
+            confidence = response.get("confidence", 0.0)
+            st.session_state.conversation_id = response.get("conversation_id")
+            
+            st.markdown(full_response)
+        
+        # Display metadata
+        cols = st.columns([3, 1])
+        with cols[0]:
+            if sources:
+                sources_display = ", ".join(sources[:3])
+                if len(sources) > 3:
+                    sources_display += f" +{len(sources) - 3} more"
+                st.caption(f"📚 Sources: {sources_display}")
+        with cols[1]:
+            if confidence > 0:
+                st.caption(f"✅ {confidence * 100:.0f}% confident")
     
-    st.divider()
-    st.write("**Current Session ID:**")
-    st.code(st.session_state.conversation_id[:12] + "...")
+    # Add assistant message to history
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": full_response,
+        "sources": sources,
+        "confidence": confidence
+    })
 
-# Footer
-st.markdown("---")
-st.markdown('<p style="text-align: center; color: #888;">BRS-SASA: AI-Powered Business Registration Assistant | Powered by LangGraph & Gemini</p>', 
-           unsafe_allow_html=True)
+
+# ============================================
+# Main Application
+# ============================================
+
+def main():
+    """Main application entry point."""
+    
+    # Render header
+    render_header()
+    
+    # Render sidebar and get any quick query
+    quick_query = render_sidebar()
+    
+    # Render chat history
+    render_chat_history()
+    
+    # Handle quick query from sidebar
+    if quick_query:
+        process_user_input(quick_query)
+        st.rerun()
+    
+    # Chat input
+    if user_input := st.chat_input("Ask about business registration in Kenya..."):
+        process_user_input(user_input)
+        st.rerun()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,293 @@
+BRS-SASA Extended Knowledge Base: Business Registration Service Kenya
+======================================================================
+
+ABOUT BRS (BUSINESS REGISTRATION SERVICE)
+-----------------------------------------
+The Business Registration Service (BRS) is a State Corporation established under the Business Registration Service Act, 2015. BRS is responsible for providing efficient and effective business registration services in Kenya.
+
+Contact Information:
+- Address: 17th Floor, UpperHill Chambers, Upper Hill Road, Nairobi, Kenya
+- Phone: +254 11 112 7000
+- Email: eo@brs.go.ke
+- Website: https://brs.go.ke
+- Operating Hours: Monday - Friday, 8:00 AM - 5:00 PM
+
+BRS SERVICES
+------------
+1. Companies Registry - Registration and management of companies
+2. Business Names Registry - Registration of business names
+3. Limited Liability Partnerships (LLP) Registry
+4. E-Collateral Registry (Movable Property Security Rights - MPSR)
+5. Hire Purchase Registry
+6. Official Receiver in Insolvency
+
+COMPANY REGISTRATION IN KENYA
+-----------------------------
+
+Types of Companies:
+1. Private Company Limited by Shares (most common)
+   - Minimum 1 shareholder, maximum 50
+   - Name ends with "Limited" or "Ltd"
+   - Cannot offer shares to the public
+   
+2. Public Company Limited by Shares
+   - Minimum 2 shareholders, no maximum
+   - Name ends with "Public Limited Company" or "PLC"
+   - Can offer shares to the public
+   
+3. Company Limited by Guarantee
+   - For non-profit organizations
+   - Members guarantee to contribute on winding up
+   
+4. Unlimited Company
+   - Members have unlimited liability
+
+Requirements for Company Registration:
+1. Proposed company name (must be unique and end with Ltd/Limited or PLC)
+2. Physical address in Kenya
+3. At least one director (must be a natural person, 18+ years)
+4. At least one shareholder
+5. Company secretary (for public companies, must be qualified)
+6. Memorandum and Articles of Association
+7. Copies of ID/Passport for all directors and shareholders
+8. KRA PIN certificates for all directors
+9. Passport photos for all directors
+
+Company Registration Process via e-Citizen:
+Step 1: Create an e-Citizen account at https://accounts.ecitizen.go.ke
+Step 2: Log in and select "Business Registration Service"
+Step 3: Apply for Name Search and Reservation
+Step 4: Once name is approved, proceed with company registration
+Step 5: Fill in company details (directors, shareholders, share capital)
+Step 6: Upload required documents
+Step 7: Pay registration fees via M-Pesa, card, or bank transfer
+Step 8: Receive Certificate of Incorporation (usually within 24-48 hours)
+
+Company Registration Fees (Approximate - verify current rates):
+- Name Reservation: KES 150
+- Private Company Registration: KES 10,650 (nominal capital up to KES 100,000)
+- Additional stamp duty based on share capital
+- Certificate of Incorporation: Included
+- Certified copies: KES 500 per copy
+
+BUSINESS NAME REGISTRATION
+--------------------------
+
+A Business Name is suitable for:
+- Sole proprietors
+- Partnerships (not LLPs)
+- Simple business structures
+
+Requirements:
+1. Proposed business name
+2. Nature of business
+3. Principal place of business (physical address)
+4. Full names and addresses of all proprietors/partners
+5. Copy of National ID or Passport
+6. KRA PIN certificate
+
+Business Name Registration Process:
+Step 1: Search for name availability on e-Citizen
+Step 2: Reserve the business name
+Step 3: Complete registration form
+Step 4: Pay registration fees
+Step 5: Receive Business Name Certificate
+
+Business Name Registration Fees:
+- Name Search: KES 150
+- Registration: KES 950
+- Certificate: Included
+- Annual renewal not required (one-time registration)
+
+LIMITED LIABILITY PARTNERSHIP (LLP)
+-----------------------------------
+
+An LLP combines features of a partnership and a company:
+- Partners have limited liability
+- Flexibility of a partnership
+- Separate legal entity
+
+Requirements:
+1. Minimum 2 partners
+2. At least one designated partner must be a Kenyan resident
+3. Registered office address in Kenya
+4. LLP Agreement
+5. Compliance with beneficial ownership regulations
+
+LLP Registration Fees:
+- Name Reservation: KES 150
+- LLP Registration: KES 10,650
+- LLP Agreement filing: KES 2,000
+
+FOREIGN COMPANY REGISTRATION
+----------------------------
+
+Foreign companies can operate in Kenya by:
+1. Registering a branch office
+2. Incorporating a subsidiary (local company)
+
+Requirements for Foreign Company Registration:
+1. Certified copy of Certificate of Incorporation from home country
+2. Certified copy of charter/statutes/memorandum
+3. List of directors
+4. Local representative appointment (must be Kenyan resident)
+5. Registered office address in Kenya
+6. Power of Attorney
+
+Foreign Company Registration Fees:
+- Registration: KES 25,000+
+- Local representative filing: KES 500
+
+BENEFICIAL OWNERSHIP REQUIREMENTS
+---------------------------------
+
+All companies and LLPs must maintain a register of beneficial owners:
+- A beneficial owner is a natural person who ultimately owns or controls the entity
+- Threshold: 10% or more shareholding or voting rights
+- Must be reported to BRS within 14 days of any change
+
+Required Information:
+- Full name and date of birth
+- Nationality and residential address
+- ID/Passport number
+- Nature and extent of beneficial interest
+- Date of becoming beneficial owner
+
+NAME RESERVATION GUIDELINES
+---------------------------
+
+Prohibited Names:
+- Names identical or similar to existing registered names
+- Names containing offensive or obscene words
+- Names suggesting government/royal patronage without approval
+- Names containing "Bank", "Insurance", "University" without relevant license
+- Names misleading as to the nature of business
+
+Name Reservation:
+- Valid for 30 days
+- Can be renewed once for additional 30 days
+- Reserved name must be used for registration within validity period
+
+DOCUMENT SEARCHES AND CERTIFICATIONS
+------------------------------------
+
+Available Searches:
+- Company search: KES 500
+- Business name search: KES 150
+- Director search: KES 500
+- Charge search: KES 500
+
+Certified Copies:
+- Certificate of Incorporation: KES 500
+- Memorandum & Articles: KES 1,000
+- Annual Returns: KES 500
+- Other documents: KES 500 per document
+
+ANNUAL COMPLIANCE REQUIREMENTS
+------------------------------
+
+Companies must file:
+1. Annual Returns - within 42 days of anniversary
+2. Financial Statements (for certain companies)
+3. Change of directors/secretary within 14 days
+4. Change of registered office within 14 days
+5. Change of share capital within 14 days
+
+Penalties for Late Filing:
+- Annual returns: KES 5,000 + KES 500 per month of delay
+- Other forms: Varies by document type
+
+COMMON ISSUES AND TROUBLESHOOTING
+---------------------------------
+
+Name Rejection Reasons:
+1. Name too similar to existing registered name
+2. Contains restricted words without approval
+3. Misleading or offensive content
+4. Does not end with appropriate suffix (Ltd, PLC, LLP)
+
+Payment Issues:
+- M-Pesa: Ensure phone number is registered correctly
+- If payment deducted but not reflected, wait 24 hours
+- Contact BRS with payment reference for assistance
+
+Document Rejection Reasons:
+1. Poor quality scans
+2. Missing required information
+3. Inconsistent information across documents
+4. Expired identification documents
+
+PROCESSING TIMELINES
+--------------------
+
+Typical Processing Times (subject to completeness of application):
+- Name Reservation: Instant to 24 hours
+- Company Registration: 24-48 hours
+- Business Name Registration: 24-48 hours
+- LLP Registration: 24-48 hours
+- Document Certifications: 1-3 business days
+- Company Search: Instant (online)
+
+E-COLLATERAL REGISTRY (MPSR)
+----------------------------
+
+The Movable Property Security Rights Registry allows:
+- Registration of security interests in movable property
+- Search for existing encumbrances
+- Priority determination for creditors
+
+Types of Collateral:
+- Vehicles and equipment
+- Inventory and accounts receivable
+- Intellectual property
+- Agricultural products
+
+HIRE PURCHASE REGISTRY
+----------------------
+
+Registration of hire purchase agreements:
+- Protects rights of owners
+- Public record of encumbrances
+- Required for enforcement
+
+INSOLVENCY AND OFFICIAL RECEIVER
+--------------------------------
+
+Services include:
+- Administration of insolvent estates
+- Liquidation proceedings
+- Bankruptcy matters
+- Voluntary arrangements
+
+FREQUENTLY ASKED QUESTIONS
+--------------------------
+
+Q: Can a foreigner own 100% of a Kenyan company?
+A: Yes, in most sectors. Some sectors like telecommunications and insurance have local ownership requirements.
+
+Q: Do I need a Kenyan director?
+A: Not mandatory for private companies, but recommended. At least one director must be a natural person.
+
+Q: How long does company registration take?
+A: Typically 24-48 hours through e-Citizen if all documents are in order.
+
+Q: What is the minimum share capital?
+A: There is no minimum share capital requirement for private companies. However, the nominal capital affects registration fees.
+
+Q: Can I register a company from outside Kenya?
+A: Yes, through e-Citizen platform or through a local agent with Power of Attorney.
+
+Q: What is the difference between a company and a business name?
+A: A company is a separate legal entity with limited liability. A business name is not a separate legal entity - the owner(s) are personally liable.
+
+Q: How do I change company directors?
+A: File Form CR12 (Notification of Change in Directors) within 14 days of the change.
+
+Q: Can I transfer shares in my company?
+A: Yes, by completing a share transfer form and updating the register of members.
+
+Q: What happens if I don't file annual returns?
+A: Penalties accrue, and the company may be struck off the register if non-compliant for extended periods.
+
+Q: How do I close/dissolve a company?
+A: Through voluntary winding up (solvent) or compulsory winding up (insolvent), following the procedures in the Companies Act and Insolvency Act.

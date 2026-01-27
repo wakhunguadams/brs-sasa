@@ -1,4 +1,4 @@
-# BRS-SASA: AI-Powered Conversational Platform - Technical Documentation
+# BRS-SASA: Technical Documentation
 
 ## Table of Contents
 1. [Overview](#overview)
@@ -12,38 +12,41 @@
 
 ## Overview
 
-BRS-SASA is an intelligent conversational AI platform for the Business Registration Service (BRS) of Kenya. The platform uses advanced RAG (Retrieval-Augmented Generation) technology to answer questions about business registration, explain draft legislation, collect public feedback, and provide real-time statistics - all through natural conversation.
+BRS-SASA is an intelligent conversational AI platform for the Business Registration Service (BRS) of Kenya. The platform uses advanced RAG (Retrieval-Augmented Generation) technology powered by **LangGraph** and **Google Gemini 2.0 Flash** to answer questions about business registration, explain draft legislation, and provide information about fees, requirements, and processes.
 
 ### Key Features
 - **Intelligent FAQ & Troubleshooting**: Answers questions about registration processes, requirements, fees, timelines
-- **Legislative Document Assistant**: Makes draft legislation accessible through conversation
-- **Public Participation Hub**: Collects citizen feedback on draft legislation
-- **Statistics & Analytics**: Provides real-time statistics through natural language queries
-- **Smart Escalation**: Recognizes when a query needs human expertise
+- **Legislative Document Assistant**: Makes legal documents accessible through conversation
+- **RAG-Powered Knowledge Base**: ChromaDB vector database with intelligent document chunking
+- **Multi-Provider LLM Support**: Factory pattern supporting Gemini, OpenAI, and Anthropic
+- **Source Citations**: Every response includes document sources and confidence scores
 
 ## Architecture
 
-The system follows a microservices architecture built on FastAPI with the following layers:
+The system follows a multi-agent architecture built on FastAPI with LangGraph orchestration:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    External Systems                         │
+│                     Demo UI (Streamlit)                     │
+│                   http://localhost:8501                     │
 ├─────────────────────────────────────────────────────────────┤
-│  BRS Website + Chat Widget | CRM System | Database        │
+│                    FastAPI Backend                          │
+│                   http://localhost:8000                     │
 ├─────────────────────────────────────────────────────────────┤
-│                    BRS-SASA AI Backend                      │
+│                LangGraph Multi-Agent System                 │
+│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────┐   │
+│  │   Router    │→ │  RAG Agent  │→ │ Response Formatter│   │
+│  │    Node     │  │    Node     │  │      Node         │   │
+│  └─────────────┘  └─────────────┘  └──────────────────┘   │
+│         ↓              ↓                                   │
+│  ┌─────────────┐  ┌─────────────┐                         │
+│  │Conversation │  │   Error     │                         │
+│  │   Agent     │  │  Handler    │                         │
+│  └─────────────┘  └─────────────┘                         │
 ├─────────────────────────────────────────────────────────────┤
-│  API Gateway & Load Balancer                              │
+│  LLM Factory (Gemini 2.0 Flash) │ ChromaDB Vector Store   │
 ├─────────────────────────────────────────────────────────────┤
-│  FastAPI Application Server                               │
-├─────────────────────────────────────────────────────────────┤
-│  LangGraph Multi-Agent System                            │
-├─────────────────────────────────────────────────────────────┤
-│  AI Factory & LLM Integration                            │
-├─────────────────────────────────────────────────────────────┤
-│  RAG System (Integrated in Agents)                       │
-├─────────────────────────────────────────────────────────────┤
-│  Data Storage & Integration Layer                        │
+│  Knowledge Base: Acts, Regulations, FAQs, Extended Info   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -51,24 +54,23 @@ The system follows a microservices architecture built on FastAPI with the follow
 
 ### Core Modules
 
-#### 1. FastAPI Web Framework
+#### 1. FastAPI Web Framework (`main.py`)
 - RESTful API endpoints for all platform functionality
 - WebSocket support for real-time chat interactions
 - Built-in automatic API documentation (Swagger/OpenAPI)
 - Asynchronous processing for high performance
-- Security middleware (authentication, rate limiting)
+- CORS middleware for cross-origin requests
 
-#### 2. LangGraph Multi-Agent System
+#### 2. LangGraph Multi-Agent System (`core/workflow.py`)
 The system uses LangGraph for orchestrating multiple AI agents with proper state management:
 - **State Management**: Typed state schema with reducer functions for safe state updates
 - **Agent Orchestration**: Router, RAG agent, conversation agent, and response formatter nodes
 - **Error Handling**: Built-in error handling and retry mechanisms
-- **Checkpointing**: Persistent memory across conversations using LangGraph checkpoints
+- **Checkpointing**: MemorySaver for conversation persistence
 
-##### State Schema
-The system uses a well-defined state schema following LangGraph best practices:
+##### State Schema (`core/state.py`)
 ```python
-from typing import Annotated, TypedDict
+from typing import Annotated, TypedDict, Optional, List, Dict, Any
 from langgraph.graph.message import add_messages
 
 class BRSState(TypedDict):
@@ -84,14 +86,11 @@ class BRSState(TypedDict):
     current_agent: str  # Currently active agent
     agent_feedback: Optional[Dict[str, Any]]  # Feedback from agents
     error_count: int  # Error counter for flow control
-    max_steps: int  # Max steps to prevent infinite loops
+    max_steps: int  # Max steps to prevent infinite loops (default: 10)
 ```
 
-#### 3. LLM Factory Pattern
+#### 3. LLM Factory Pattern (`llm_factory/factory.py`)
 The LLM factory provides abstraction over multiple LLM providers:
-- **Google Gemini** (default)
-- **OpenAI GPT**
-- **Anthropic Claude**
 
 ```python
 from llm_factory.factory import LLMFactory
@@ -100,77 +99,120 @@ factory = LLMFactory()
 llm = factory.get_llm("gemini")  # or "openai", "anthropic"
 ```
 
-#### 4. AI Agents
+**Supported Providers:**
+| Provider | Model | Package |
+|----------|-------|---------|
+| Gemini (default) | gemini-2.0-flash | google-genai |
+| OpenAI | gpt-4 | openai |
+| Anthropic | claude-3 | anthropic |
 
-##### LangGraph Nodes
-The system implements several specialized nodes in the LangGraph workflow:
+#### 4. AI Agents (`agents/`)
+
+##### LangGraph Nodes (`agents/langgraph_nodes.py`)
 
 ###### Router Node
-Determines which agent should handle the incoming query based on content analysis:
+Determines which agent should handle the incoming query:
 ```python
 async def router_node(state: BRSState) -> Dict[str, str]:
     # Analyzes user input and routes to appropriate agent
-    return {"current_agent": "rag_agent" if is_knowledge_query else "conversation_agent"}
+    # Returns: {"current_agent": "rag_agent" | "conversation_agent"}
 ```
 
-###### RAG Agent Node
+###### RAG Agent Node (`agents/rag_agent.py`)
 Handles knowledge-based queries by retrieving relevant documents:
 ```python
 async def rag_agent_node(state: BRSState) -> Dict[str, Any]:
-    # Performs RAG operations and returns structured response
-    return {
-        "response": response_text,
-        "sources": sources_list,
-        "confidence": confidence_score,
-        "retrieved_docs": documents_list
-    }
+    # Performs RAG operations:
+    # 1. Search ChromaDB for relevant chunks
+    # 2. Build context from retrieved documents
+    # 3. Generate response with Gemini
+    # 4. Extract and clean source filenames
+    # Returns: {response, sources, confidence, retrieved_docs}
 ```
 
-###### Conversation Agent Node
-Handles general conversation and context management:
+###### Conversation Agent Node (`agents/conversation_agent.py`)
+Handles general conversation and greetings:
 ```python
 async def conversation_agent_node(state: BRSState) -> Dict[str, Any]:
-    # Processes conversational queries
-    return {
-        "response": response_text,
-        "sources": sources_list,
-        "confidence": confidence_score
-    }
+    # Processes conversational queries without RAG
+    # Returns: {response, sources, confidence}
 ```
 
 ###### Response Formatter Node
-Formats the final response for the user:
+Formats the final response with sources and confidence:
 ```python
 async def response_formatter_node(state: BRSState) -> Dict[str, Any]:
-    # Formats response with sources and confidence
-    return {"response": formatted_response, "messages": [ai_message]}
+    # Formats response, adds AI message to history
+    # Returns: {response, messages}
 ```
 
-#### 5. Knowledge Base Management
-- Document ingestion pipeline for legislation, acts, regulations and FAQs
-- Vector database (Chroma) for knowledge storage
-- Multi-modal retrieval (text, tables, structured data)
-- Semantic search with hybrid retrieval methods
+#### 5. Knowledge Base Management (`core/knowledge_base.py`)
 
-#### 6. Configuration Management
-Centralized configuration using Pydantic Settings:
-- Environment variable loading
-- Type validation
-- Default values
-- Sensitive data handling
+**Features:**
+- Document ingestion with intelligent chunking
+- ChromaDB vector database for semantic search
+- Sentence-transformers for embeddings (`all-MiniLM-L6-v2`)
+- Section-based chunking for structured documents
+- Query expansion for improved retrieval accuracy
+
+**Document Chunking (`utils/document_loader.py`):**
+```python
+class TextChunker:
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
+        # Splits documents at natural boundaries (paragraphs, sentences)
+        # Creates overlapping chunks for better context preservation
+    
+    def split_by_sections(self, text: str) -> List[str]:
+        # Section-aware chunking that preserves document structure
+        # Keeps headers with their content (e.g., fee schedules stay together)
+        # Prefixes chunks with section headers: [COMPANY REGISTRATION], [LLP], etc.
+```
+
+**Query Expansion (`agents/rag_agent.py`):**
+The RAG agent automatically expands user queries to improve retrieval accuracy:
+- Fee queries: Adds KES amounts and entity-specific terms
+- Registration queries: Adds process and requirement keywords
+- Contact queries: Adds phone, email, address terms
+- LLP/Foreign queries: Adds specific terminology and fee amounts
+
+Example: "What are LLP fees?" expands to:
+- "What are LLP fees?"
+- "LLP Registration Fees KES 10,650"
+- "LLP Agreement filing KES 2,000"
+- "LIMITED LIABILITY PARTNERSHIP requirements partners"
+
+**Initialization:**
+```bash
+python initialize_kb.py
+```
+
+This ingests:
+- Legal acts (Companies Act, Business Names Act, LLP Act)
+- Regulatory documents
+- FAQs (PDF)
+- Extended BRS information (fees, contacts, processes)
+
+#### 6. Demo UI (`ui_demo.py`)
+Streamlit-based demo interface featuring:
+- Native `st.chat_message()` components for proper theming
+- Real-time chat with the API backend
+- Source citations and confidence indicators
+- Quick query buttons in sidebar
+- Session management
 
 ## Installation
 
 ### Prerequisites
 - Python 3.9+
 - pip package manager
+- Google Gemini API key (get one at https://aistudio.google.com/)
 
 ### Steps
 
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd brs-sasa
+cd brs-sasa/brs_sasa
 ```
 
 2. Create a virtual environment:
@@ -184,51 +226,105 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Copy the environment file and configure your settings:
+4. Configure environment variables:
 ```bash
 cp .env.example .env
-# Edit .env with your API keys and settings
+# Edit .env with your API keys
+```
+
+5. Initialize the knowledge base:
+```bash
+python initialize_kb.py
 ```
 
 ## Configuration
 
-The application uses environment variables for configuration. The following settings are available:
+The application uses environment variables for configuration via Pydantic Settings:
 
-### Application Settings
-- `APP_NAME`: Name of the application (default: "BRS-SASA")
-- `DEBUG`: Enable debug mode (default: false)
-- `HOST`: Host to bind to (default: "0.0.0.0")
-- `PORT`: Port to bind to (default: 8000)
+### Required Settings
+| Variable | Description |
+|----------|-------------|
+| `GEMINI_API_KEY` | Google Gemini API key |
 
-### CORS Settings
-- `ALLOWED_ORIGINS`: List of allowed origins for CORS (default: ["*"])
-
-### Database Settings
-- `DATABASE_URL`: Database connection string (default: "sqlite:///./brs_sasa.db")
-
-### LLM Settings
-- `DEFAULT_LLM_PROVIDER`: Default LLM provider to use (default: "gemini")
-- `GEMINI_API_KEY`: Google Gemini API key
-- `OPENAI_API_KEY`: OpenAI API key
-- `ANTHROPIC_API_KEY`: Anthropic API key
-
-### Vector Database Settings
-- `VECTOR_DB_TYPE`: Type of vector database to use (default: "chroma")
-- `CHROMA_PERSIST_DIR`: Directory for ChromaDB persistence (default: "./chroma_data")
-
-### Logging Settings
-- `LOG_LEVEL`: Logging level (default: "INFO")
-- `LOG_FORMAT`: Log message format
+### Optional Settings
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `APP_NAME` | Application name | BRS-SASA |
+| `DEBUG` | Enable debug mode | false |
+| `HOST` | API server host | 0.0.0.0 |
+| `PORT` | API server port | 8000 |
+| `DEFAULT_LLM_PROVIDER` | LLM provider | gemini |
+| `OPENAI_API_KEY` | OpenAI API key | - |
+| `ANTHROPIC_API_KEY` | Anthropic API key | - |
+| `VECTOR_DB_TYPE` | Vector database type | chroma |
+| `CHROMA_PERSIST_DIR` | ChromaDB storage | ./chroma_data |
+| `LOG_LEVEL` | Logging level | INFO |
+| `ALLOWED_ORIGINS` | CORS origins | ["*"] |
 
 ## API Reference
 
 ### Base URL
-`http://localhost:8000` (or your configured host/port)
+`http://localhost:8000`
 
-### Endpoints
+### OpenAI-Compatible Endpoints
+
+The API follows OpenAI's chat completions format for easy integration with existing tools.
+
+#### POST /api/v1/chat/completions
+OpenAI-compatible chat completions endpoint with optional streaming.
+
+**Request Body:**
+```json
+{
+  "messages": [
+    {"role": "user", "content": "What are the LLP registration fees?"}
+  ],
+  "model": "gemini-2.0-flash",
+  "stream": false,
+  "conversation_id": "optional-uuid"
+}
+```
+
+**Response:**
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1706000000,
+  "model": "gemini-2.0-flash",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "The fees for registering an LLP are:\n- Name Reservation: KES 150\n- LLP Registration: KES 10,650\n- LLP Agreement filing: KES 2,000"
+    },
+    "finish_reason": "stop"
+  }],
+  "conversation_id": "uuid",
+  "sources": ["brs_extended_info.txt"],
+  "confidence": 0.85
+}
+```
+
+**Streaming (SSE):**
+Set `"stream": true` to receive Server-Sent Events:
+```
+data: {"id":"chatcmpl-abc","choices":[{"delta":{"content":"The "}}]}
+data: {"id":"chatcmpl-abc","choices":[{"delta":{"content":"fees "}}]}
+...
+data: [DONE]
+```
+
+#### POST /api/v1/chat/conversations
+Create or continue a conversation with server-side persistence.
+
+#### GET /api/v1/chat/conversations/{conversation_id}
+Retrieve conversation history.
+
+### Legacy Endpoints
 
 #### GET /
-Root endpoint with basic information about the service.
+Root endpoint with service information.
 
 **Response:**
 ```json
@@ -241,7 +337,7 @@ Root endpoint with basic information about the service.
 ```
 
 #### GET /info
-Returns application information and configuration (without sensitive data).
+Application configuration (non-sensitive).
 
 **Response:**
 ```json
@@ -251,7 +347,7 @@ Returns application information and configuration (without sensitive data).
   "version": "1.0.0",
   "llm_provider": "gemini",
   "vector_db_type": "chroma",
-  "timestamp": 1234567890
+  "timestamp": 1706000000
 }
 ```
 
@@ -262,29 +358,21 @@ Health check endpoint.
 ```json
 {
   "status": "healthy",
-  "timestamp": 1234567890,
+  "timestamp": 1706000000,
   "service": "brs-sasa-api"
 }
 ```
 
 #### POST /api/v1/chat/
-Handle a chat request and return a response.
+Main chat endpoint using LangGraph multi-agent system.
 
 **Request Body:**
 ```json
 {
   "message": "How do I register a business?",
   "history": [
-    {
-      "role": "user",
-      "content": "Hello",
-      "timestamp": "2023-01-01T00:00:00Z"
-    },
-    {
-      "role": "assistant", 
-      "content": "Hello! How can I help you?",
-      "timestamp": "2023-01-01T00:00:00Z"
-    }
+    {"role": "user", "content": "Hello"},
+    {"role": "assistant", "content": "Hello! How can I help you?"}
   ],
   "provider": "gemini",
   "context": {}
@@ -294,150 +382,141 @@ Handle a chat request and return a response.
 **Response:**
 ```json
 {
-  "response": "To register a business in Kenya...",
-  "sources": ["FAQs.pdf", "CompaniesAct17of2015.pdf"],
+  "response": "To register a business in Kenya, you need to...",
+  "sources": ["brs_extended_info.txt", "CompaniesAct17of2015.pdf"],
   "confidence": 0.85,
-  "timestamp": "2023-01-01T00:00:00Z"
+  "timestamp": "2026-01-23T12:00:00Z"
 }
 ```
 
 #### WebSocket /api/v1/chat/ws
-WebSocket endpoint for real-time chat.
+Real-time chat via WebSocket.
 
-**Send Message:**
+**Send:**
 ```json
-{
-  "message": "How much does registration cost?"
-}
+{"message": "How much does registration cost?"}
 ```
 
-**Receive Response:**
+**Receive:**
 ```json
 {
-  "response": "Business registration costs KSH 10,750...",
-  "sources": ["FAQs.pdf"],
+  "response": "Business name registration costs KES 950...",
+  "sources": ["brs_extended_info.txt"],
   "confidence": 0.92
 }
 ```
 
 #### GET /api/v1/documents/list
-List all documents in the knowledge base.
+List documents in the knowledge base.
 
-**Response:**
-```json
-{
-  "documents": [],
-  "count": 0
-}
-```
+#### POST /api/v1/documents/upload
+Upload a document to the knowledge base.
 
 ## Testing
 
-Run the test suite using pytest:
+Run the test suite:
 
 ```bash
-# Run all tests
+# All tests
 pytest
 
-# Run tests with verbose output
+# Verbose output
 pytest -v
 
-# Run specific test file
-pytest brs_sasa/tests/test_main.py
+# Specific file
+pytest tests/test_main.py
+
+# With coverage
+pytest --cov=. --cov-report=html
 ```
 
-The test suite includes:
-- Unit tests for core components
-- Integration tests for API endpoints
-- Mock-based tests for LLM interactions
-- Validation tests for configuration
+### Test Suite Contents
+- Configuration validation tests
+- LLM factory tests
+- RAG agent tests
+- State management tests
+- API endpoint tests
+
+All 9 tests currently passing.
 
 ## Deployment
 
 ### Local Development
 ```bash
+# Both API and UI
 python start_server.py
-```
 
-Or directly:
-```bash
-uvicorn brs_sasa.main:app --reload
+# API only
+python start_server.py --mode api
+
+# Direct uvicorn with reload
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### Production Deployment
 
-For production deployment, consider:
-
-1. Use a WSGI/ASGI server like Gunicorn:
+1. Use Gunicorn with Uvicorn workers:
 ```bash
-gunicorn brs_sasa.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 ```
 
-2. Set DEBUG=false in production
-3. Use proper reverse proxy (nginx, Apache)
-4. Configure SSL/TLS
-5. Set up proper logging
-6. Use a production-ready database (PostgreSQL)
+2. Environment settings:
+   - Set `DEBUG=false`
+   - Configure proper `ALLOWED_ORIGINS`
+   - Use SSL/TLS termination at reverse proxy
 
-### Docker Deployment
-
-Create a Dockerfile:
+3. Docker deployment:
 ```dockerfile
 FROM python:3.11-slim
 
 WORKDIR /app
-
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY . .
+RUN python initialize_kb.py
 
 EXPOSE 8000
-
-CMD ["uvicorn", "brs_sasa.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-Build and run:
 ```bash
 docker build -t brs-sasa .
-docker run -p 8000:8000 -e GEMINI_API_KEY=your_key_here brs-sasa
+docker run -p 8000:8000 -e GEMINI_API_KEY=your_key brs-sasa
 ```
 
 ## Phase 1 Implementation Status
 
-Phase 1 includes:
-- ✅ FastAPI web framework setup with RESTful API endpoints
-- ✅ LangGraph orchestrator to coordinate agent interactions (planned for next phase)
-- ✅ Conversation Agent: Handles user interactions and maintains context
-- ✅ RAG Agent: Manages document retrieval and knowledge base queries
-- ✅ Simple chat interface with WebSocket support
-- ✅ AI factory pattern supporting multiple LLM providers
-- ✅ Basic RAG system with vector database (Chroma) using local documents
-- ✅ Core conversation flow implementation
-- ✅ Unit tests and basic documentation
+### Completed
+- [x] FastAPI web framework with REST + WebSocket endpoints
+- [x] LangGraph multi-agent orchestration with StateGraph
+- [x] RAG Agent with ChromaDB vector store
+- [x] Conversation Agent for general queries
+- [x] Router Node for intelligent query routing
+- [x] Response Formatter with source citations
+- [x] Error Handler with retry logic
+- [x] Multi-provider LLM factory (Gemini 2.0 Flash default)
+- [x] Section-aware document chunking (preserves structure)
+- [x] Query expansion for improved retrieval accuracy
+- [x] OpenAI-compatible API with SSE streaming
+- [x] Conversation persistence (server-side)
+- [x] Streamlit Demo UI with native components
+- [x] Unit tests (9 passing)
+- [x] Extended knowledge base (fees, contacts, processes)
 
-## Future Enhancements
+### Verified Query Coverage
+| Query Type | Status | Example Response |
+|------------|--------|------------------|
+| Company Fees | PASS | KES 10,650 for private company |
+| Business Name Fees | PASS | KES 950 registration |
+| LLP Fees | PASS | KES 10,650 + KES 2,000 agreement |
+| Foreign Company Fees | PASS | KES 25,000+ registration |
+| Contact Details | PASS | Full address, phone, email |
+| Processing Times | PASS | 24-48 hours |
 
-### Phase 2: Knowledge Management
-- Document ingestion pipeline for legislation, acts, regulations and FAQs
-- Vector database (Chroma/Pinecone) setup and integration
-- Multi-modal retrieval capabilities
-- Legislative Agent: Specialized for legal document analysis and comparison
-- Feedback Agent: Manages public participation and feedback collection
-
-### Phase 3: Advanced Integrations
-- CRM system integration for issue escalation and case management
-- Database integration for real-time statistics and company registration progress
-- Statistics Agent: Handles data queries from BRS database
-- Escalation Agent: Routes complex queries to human agents via CRM integration
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+### Future Phases
+- Phase 2: Legislative Agent, Feedback Agent, Multi-language support
+- Phase 3: CRM integration, Database integration, Statistics Agent
 
 ## License
 

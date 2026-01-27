@@ -2,7 +2,7 @@ from typing import Dict, Any
 from langchain_core.messages import HumanMessage, AIMessage
 import traceback
 
-from core.state import BRSState
+from core.state import BRSState, should_route_to_rag
 from llm_factory.factory import LLMFactory
 from agents.rag_agent import RAGAgent
 from agents.conversation_agent import ConversationAgent

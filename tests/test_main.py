@@ -1,13 +1,19 @@
 import pytest
 import asyncio
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from brs_sasa.main import app
-from brs_sasa.llm_factory.factory import LLMFactory, BaseLLM
-from brs_sasa.agents.conversation_agent import ConversationAgent, AgentResponse
-from brs_sasa.agents.rag_agent import RAGAgent, RAGResponse
-from brs_sasa.schemas.chat import ChatRequest
+from main import app
+from llm_factory.factory import LLMFactory, BaseLLM
+from agents.conversation_agent import ConversationAgent, AgentResponse
+from agents.rag_agent import RAGAgent, RAGResponse
+from schemas.chat import ChatCompletionRequest, MessageContent
 
 client = TestClient(app)
 
@@ -16,11 +22,15 @@ class MockLLM(BaseLLM):
 
     def __init__(self, response_text="Mock response"):
         self.response_text = response_text
+        self.generate_response_called = False
+        self.embed_text_called = False
 
     async def generate_response(self, prompt: str, context: dict = None) -> str:
+        self.generate_response_called = True
         return self.response_text
 
     async def embed_text(self, text: str) -> list:
+        self.embed_text_called = True
         return [0.1, 0.2, 0.3]  # Mock embedding
 
 @pytest.fixture
@@ -56,7 +66,7 @@ def test_health_check():
     assert data["service"] == "brs-sasa-api"
 
 @pytest.mark.asyncio
-@patch('brs_sasa.llm_factory.factory.LLMFactory.get_llm')
+@patch('llm_factory.factory.LLMFactory.get_llm')
 async def test_conversation_agent_with_mock(mock_get_llm):
     """Test the conversation agent with a mock LLM"""
     # Configure the mock
@@ -79,10 +89,10 @@ async def test_conversation_agent_with_mock(mock_get_llm):
     assert isinstance(result.sources, list)
 
     # Verify the LLM was called
-    assert mock_llm.generate_response.called
+    assert mock_llm.generate_response_called
 
 @pytest.mark.asyncio
-@patch('brs_sasa.llm_factory.factory.LLMFactory.get_llm')
+@patch('llm_factory.factory.LLMFactory.get_llm')
 async def test_rag_agent_with_mock(mock_get_llm):
     """Test the RAG agent with a mock LLM"""
     # Configure the mock
@@ -117,7 +127,7 @@ async def test_rag_agent_with_mock(mock_get_llm):
         # Verify the knowledge base search was called
         mock_search.assert_called_once()
         # Verify the LLM was called
-        assert mock_llm.generate_response.called
+        assert mock_llm.generate_response_called
 
 def test_llm_factory():
     """Test the LLM factory creation (without actual API keys)"""
@@ -136,13 +146,13 @@ def test_llm_factory():
 
 def test_chat_endpoint_basic():
     """Test the chat endpoint with basic request"""
-    # This test will likely fail due to missing API key, but we can test the structure
     chat_request = {
-        "message": "Hello, how do I register a business?",
-        "history": []
+        "messages": [
+            {"role": "user", "content": "Hello, how do I register a business?"}
+        ]
     }
 
-    response = client.post("/api/v1/chat/", json=chat_request)
+    response = client.post("/api/v1/chat/completions", json=chat_request)
 
     # The response should be one of these depending on if API keys are configured
     assert response.status_code in [200, 422, 500]
@@ -150,12 +160,13 @@ def test_chat_endpoint_basic():
 def test_chat_endpoint_with_provider():
     """Test the chat endpoint with explicit provider"""
     chat_request = {
-        "message": "What are the requirements for registering a company?",
-        "history": [],
+        "messages": [
+            {"role": "user", "content": "What are the requirements for registering a company?"}
+        ],
         "provider": "gemini"
     }
 
-    response = client.post("/api/v1/chat/", json=chat_request)
+    response = client.post("/api/v1/chat/completions", json=chat_request)
 
     # The response should be one of these depending on if API keys are configured
     assert response.status_code in [200, 422, 500]

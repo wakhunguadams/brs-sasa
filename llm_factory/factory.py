@@ -28,29 +28,32 @@ class BaseLLM(ABC):
 
 class GeminiLLM(BaseLLM):
     """
-    Google Gemini LLM implementation
+    Google Gemini LLM implementation using google-genai
     """
     
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or settings.GEMINI_API_KEY
-        self.model_name = "gemini-pro"  # Default model
+        self.model_name = "gemini-2.0-flash"
         
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is required for Gemini LLM")
         
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            self.client = genai.GenerativeModel(self.model_name)
+            from google import genai
+            self.client = genai.Client(api_key=self.api_key)
         except ImportError:
-            raise ImportError("Please install google-generativeai: pip install google-generativeai")
+            raise ImportError("Please install google-genai: pip install google-genai")
     
     async def generate_response(self, prompt: str, context: Optional[dict] = None) -> str:
         """
         Generate a response using Google Gemini
         """
         try:
-            response = self.client.generate_content(prompt)
+            from google import genai
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt
+            )
             return response.text
         except Exception as e:
             logger.error(f"Error generating response from Gemini: {str(e)}")
@@ -61,13 +64,11 @@ class GeminiLLM(BaseLLM):
         Generate embeddings using Google Gemini
         """
         try:
-            import google.generativeai as genai
-            result = genai.embed_content(
-                model="models/embedding-001",
-                content=text,
-                task_type="retrieval_document"
+            result = self.client.models.embed_content(
+                model="text-embedding-004",
+                contents=text
             )
-            return result['embedding']
+            return result.embeddings[0].values
         except Exception as e:
             logger.error(f"Error generating embeddings from Gemini: {str(e)}")
             raise

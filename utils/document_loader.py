@@ -3,10 +3,137 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
+import re
 
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+class TextChunker:
+    """
+    Utility class for splitting text into chunks with overlap
+    """
+    
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+    
+    def split_text(self, text: str) -> List[str]:
+        """
+        Split text into overlapping chunks
+        """
+        if not text or len(text) <= self.chunk_size:
+            return [text] if text else []
+        
+        chunks = []
+        start = 0
+        
+        while start < len(text):
+            end = start + self.chunk_size
+            
+            # Try to find a natural break point (paragraph, sentence, or word boundary)
+            if end < len(text):
+                # Look for paragraph break
+                para_break = text.rfind('\n\n', start, end)
+                if para_break > start + self.chunk_size // 2:
+                    end = para_break + 2
+                else:
+                    # Look for sentence break
+                    sentence_break = max(
+                        text.rfind('. ', start, end),
+                        text.rfind('? ', start, end),
+                        text.rfind('! ', start, end)
+                    )
+                    if sentence_break > start + self.chunk_size // 2:
+                        end = sentence_break + 2
+                    else:
+                        # Look for word boundary
+                        word_break = text.rfind(' ', start, end)
+                        if word_break > start + self.chunk_size // 2:
+                            end = word_break + 1
+            
+            chunk = text[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+            
+            # Move start position with overlap
+            start = end - self.chunk_overlap if end < len(text) else len(text)
+        
+        return chunks
+    
+    def split_by_sections(self, text: str, section_delimiter: str = r'\n-{3,}\n|\n={3,}\n') -> List[str]:
+        """
+        Split text by section headers (lines of dashes or equals signs).
+        Each section is kept as a separate chunk for better context.
+        Large sections are further chunked.
+        """
+        import re
+        
+        # Split by section delimiters (lines with 3+ dashes or equals)
+        # Pattern matches header underlines like "----" or "===="
+        lines = text.split('\n')
+        sections = []
+        current_section = []
+        current_header = ""
+        
+        for i, line in enumerate(lines):
+            # Check if this line is a section delimiter (underline)
+            if re.match(r'^[-=]{3,}$', line.strip()):
+                # The previous line was the header
+                if current_section:
+                    # Save the previous section
+                    section_text = '\n'.join(current_section).strip()
+                    if section_text:
+                        sections.append({
+                            'header': current_header,
+                            'content': section_text
+                        })
+                    current_section = []
+                # Get the header from the line before the delimiter
+                if i > 0:
+                    current_header = lines[i-1].strip()
+                    # Remove the header from current_section as it will be re-added
+                    if current_section and current_section[-1].strip() == current_header:
+                        current_section.pop()
+            else:
+                current_section.append(line)
+        
+        # Don't forget the last section
+        if current_section:
+            section_text = '\n'.join(current_section).strip()
+            if section_text:
+                sections.append({
+                    'header': current_header,
+                    'content': section_text
+                })
+        
+        # Process sections - keep small sections together, chunk large ones
+        chunks = []
+        max_section_size = self.chunk_size * 2  # Allow sections up to 2x chunk size
+        
+        for section in sections:
+            header = section['header']
+            content = section['content']
+            
+            if len(content) <= max_section_size:
+                # Small section - keep as one chunk with header prefix
+                if header:
+                    chunk_text = f"[{header}]\n\n{content}"
+                else:
+                    chunk_text = content
+                chunks.append(chunk_text)
+            else:
+                # Large section - chunk it but prefix each chunk with header
+                sub_chunks = self.split_text(content)
+                for i, sub_chunk in enumerate(sub_chunks):
+                    if header:
+                        chunk_text = f"[{header} - Part {i+1}/{len(sub_chunks)}]\n\n{sub_chunk}"
+                    else:
+                        chunk_text = sub_chunk
+                    chunks.append(chunk_text)
+        
+        return chunks
 
 class DocumentLoader(ABC):
     """
@@ -115,15 +242,16 @@ class DocumentProcessor:
     Processor to handle different types of documents using appropriate loaders
     """
     
-    def __init__(self):
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
         self.loaders = {
             '.pdf': PDFLoader(),
             '.txt': TextLoader(),
             '.doc': TextLoader(),  # Simplified for now
             '.docx': TextLoader()  # Simplified for now
         }
+        self.chunker = TextChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     
-    def load_document(self, file_path: str) -> Dict[str, Any]:
+    def load_document(self, file_path: str, chunk: bool = True) -> Dict[str, Any]:
         """
         Load a document using the appropriate loader based on file extension
         """
@@ -145,7 +273,43 @@ class DocumentProcessor:
             }
         }
     
-    def load_documents_from_directory(self, directory_path: str) -> List[Dict[str, Any]]:
+    def load_and_chunk_document(self, file_path: str) -> List[Dict[str, Any]]:
+        """
+        Load a document and split it into chunks for better RAG performance.
+        Uses section-based chunking for text files with clear section headers.
+        """
+        doc = self.load_document(file_path)
+        ext = Path(file_path).suffix.lower()
+        
+        # Use section-based chunking for text files (knowledge docs)
+        if ext == '.txt' and self._has_section_headers(doc["content"]):
+            chunks = self.chunker.split_by_sections(doc["content"])
+        else:
+            chunks = self.chunker.split_text(doc["content"])
+        
+        chunked_docs = []
+        for i, chunk in enumerate(chunks):
+            chunked_docs.append({
+                "source": doc["source"],
+                "content": chunk,
+                "metadata": {
+                    **doc["metadata"],
+                    "chunk_index": i,
+                    "total_chunks": len(chunks)
+                }
+            })
+        
+        return chunked_docs
+    
+    def _has_section_headers(self, text: str) -> bool:
+        """
+        Check if text contains section headers (lines of dashes/equals signs).
+        """
+        import re
+        # Look for lines that are just dashes or equals (section underlines)
+        return bool(re.search(r'\n-{3,}\n|\n={3,}\n', text))
+    
+    def load_documents_from_directory(self, directory_path: str, chunk: bool = True) -> List[Dict[str, Any]]:
         """
         Load all supported documents from a directory
         """
@@ -154,7 +318,29 @@ class DocumentProcessor:
         for ext, loader in self.loaders.items():
             try:
                 docs = loader.load_documents(directory_path)
-                documents.extend(docs)
+                if chunk:
+                    # Chunk each document
+                    for doc in docs:
+                        doc_ext = Path(doc["source"]).suffix.lower()
+                        
+                        # Use section-based chunking for text files with headers
+                        if doc_ext == '.txt' and self._has_section_headers(doc["content"]):
+                            chunks = self.chunker.split_by_sections(doc["content"])
+                        else:
+                            chunks = self.chunker.split_text(doc["content"])
+                        
+                        for i, chunk_text in enumerate(chunks):
+                            documents.append({
+                                "source": doc["source"],
+                                "content": chunk_text,
+                                "metadata": {
+                                    **doc.get("metadata", {}),
+                                    "chunk_index": i,
+                                    "total_chunks": len(chunks)
+                                }
+                            })
+                else:
+                    documents.extend(docs)
             except Exception as e:
                 logger.error(f"Error loading {ext} documents from {directory_path}: {str(e)}")
         
