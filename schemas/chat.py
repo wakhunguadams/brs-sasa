@@ -41,8 +41,9 @@ class Message(BaseModel):
     conversation_id: str = Field(description="Parent conversation ID")
     role: Literal["user", "assistant", "system"]
     content: str
-    metadata: Optional[MessageMetadata] = None
+    message_metadata: Optional[MessageMetadata] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================
@@ -57,7 +58,8 @@ class Conversation(BaseModel):
     messages: List[Message] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    conversation_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ConversationCreate(BaseModel):
@@ -67,13 +69,14 @@ class ConversationCreate(BaseModel):
         default=None,
         description="Optional system prompt for this conversation"
     )
-    metadata: Optional[Dict[str, Any]] = None
+    conversation_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 class ConversationUpdate(BaseModel):
     """Request to update conversation status."""
     status: Optional[Literal["active", "archived", "closed"]] = None
     title: Optional[str] = None
+    conversation_metadata: Optional[Dict[str, Any]] = None
 
 
 class ConversationList(BaseModel):

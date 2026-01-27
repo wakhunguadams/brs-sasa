@@ -41,7 +41,8 @@ def create_conversation(title: Optional[str] = None, system_message: Optional[st
                 f"{API_BASE_URL}/conversations",
                 json={
                     "title": title,
-                    "system_message": system_message
+                    "system_message": system_message,
+                    "conversation_metadata": {}
                 }
             )
             response.raise_for_status()
@@ -58,7 +59,7 @@ def send_message(messages: list, conversation_id: Optional[str] = None, stream: 
             payload = {
                 "messages": messages,
                 "conversation_id": conversation_id,
-                "stream": False,  # We handle streaming separately
+                "stream": stream,
                 "provider": "gemini"
             }
             

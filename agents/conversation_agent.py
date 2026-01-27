@@ -1,8 +1,8 @@
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
-import logging
 
-from llm_factory.factory import BaseLLM
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -16,88 +16,58 @@ class AgentResponse:
 
 class ConversationAgent:
     """
-    Agent responsible for handling conversation flow and context management
+    Conversation Agent for handling general chat
+    Following LangGraph 2026 best practices with proper message-based invocation
     """
     
-    def __init__(self, llm: BaseLLM):
+    def __init__(self, llm: BaseChatModel):
         self.llm = llm
         self.logger = logger
+        logger.info("Conversation agent initialized")
     
-    async def process_message(
-        self, 
-        message: str, 
-        history: List[Dict[str, str]], 
-        context: Optional[Dict[str, Any]] = None
-    ) -> AgentResponse:
+    async def generate_response(self, user_input: str, history: List[Dict[str, str]] = None) -> str:
         """
-        Process a user message and return an appropriate response
+        Generate a conversational response with history awareness
         """
         try:
-            # Build the prompt with conversation history and context
-            prompt = self._build_prompt(message, history, context)
+            messages = [SystemMessage(content=self._get_system_context())]
             
-            # Generate response from LLM
-            response_text = await self.llm.generate_response(prompt)
+            # Add conversation history
+            if history:
+                for msg in history[-5:]:  # Last 5 exchanges
+                    role = msg.get("role", "user")
+                    if role == "user":
+                        messages.append(HumanMessage(content=msg["content"]))
+                    else:
+                        messages.append(AIMessage(content=msg["content"]))
             
-            # For now, return a basic response with confidence
-            # In a real implementation, we would extract sources and confidence from the response
-            return AgentResponse(
-                response_text=response_text,
-                sources=[],
-                confidence=0.8,  # Placeholder confidence score
-                metadata={"processed_by": "conversation_agent"}
-            )
+            # Add current user input
+            messages.append(HumanMessage(content=user_input))
+            
+            # Invoke LLM
+            response = await self.llm.ainvoke(messages)
+            return response.content.strip()
+            
         except Exception as e:
-            self.logger.error(f"Error processing message: {str(e)}")
-            return AgentResponse(
-                response_text="I'm sorry, I encountered an error processing your request. Please try again.",
-                sources=[],
-                confidence=0.0,
-                metadata={"error": str(e)}
-            )
+            self.logger.error(f"Error generating conversation response: {str(e)}")
+            return self._get_fallback_response(user_input)
     
-    def _build_prompt(
-        self, 
-        message: str, 
-        history: List[Dict[str, str]], 
-        context: Optional[Dict[str, Any]]
-    ) -> str:
+    def _get_system_context(self) -> str:
         """
-        Build a prompt with conversation history and context
+        Get the system context for the conversation
         """
-        # Start with system context
-        system_context = (
-            "You are BRS-SASA, an AI assistant for the Business Registration Service (BRS) of Kenya. "
-            "You help users with business registration queries, explain legal documents, "
-            "provide statistics, and assist with public participation in legislation. "
-            "Always be helpful, accurate, and cite sources when possible. "
-            "If you don't know something, say so and suggest contacting BRS directly."
+        return (
+            "You are BRS-SASA, a friendly and helpful AI assistant for the Business Registration Service (BRS) of Kenya. "
+            "You help users with business registration queries, explain legal documents, and provide general information. "
+            "Always be professional yet approachable. "
+            "If you don't know something specific, suggest contacting BRS directly or asking a more specific question."
         )
+    
+    def _get_fallback_response(self, user_input: str) -> str:
+        """Provide a fallback response when LLM fails"""
+        user_input_lower = user_input.lower()
         
-        # Add any additional context
-        if context:
-            if "document_context" in context:
-                system_context += f"\n\nAdditional context from documents: {context['document_context']}"
+        if any(kw in user_input_lower for kw in ['hi', 'hello', 'hey', 'jambo']):
+            return "Hello! I'm BRS-SASA, your AI assistant for the Business Registration Service of Kenya. How can I help you today?"
         
-        # Build conversation history
-        conversation_history = "\n".join([
-            f"{msg['role'].title()}: {msg['content']}" 
-            for msg in history[-5:]  # Use last 5 exchanges for context
-        ])
-        
-        # Combine everything into the final prompt
-        if conversation_history:
-            prompt = (
-                f"{system_context}\n\n"
-                f"Previous conversation:\n{conversation_history}\n\n"
-                f"User: {message}\n"
-                f"Assistant:"
-            )
-        else:
-            prompt = (
-                f"{system_context}\n\n"
-                f"User: {message}\n"
-                f"Assistant:"
-            )
-        
-        return prompt
+        return "I apologize, but I'm currently experiencing high traffic. Please try again in a moment, or ask a specific question about business registration in Kenya."

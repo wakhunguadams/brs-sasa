@@ -2,8 +2,9 @@
 BRS-SASA Chat API - Production-Ready Endpoints
 Following industry best practices: OpenAI-compatible, SSE streaming, conversation management.
 """
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Header, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Header, Query, Depends
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 from typing import Dict, Optional, AsyncGenerator, List
 import json
 import logging
@@ -31,14 +32,13 @@ from schemas.chat import (
 )
 from core.workflow import brs_workflow
 from core.state import BRSState
+from core.database import get_db
+from core.models import ConversationModel, MessageModel
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from core.logger import setup_logger
 
 router = APIRouter()
 logger = setup_logger(__name__)
-
-# In-memory conversation store (replace with Redis/PostgreSQL in production)
-conversations: Dict[str, Conversation] = {}
 
 
 # ============================================
@@ -108,19 +108,31 @@ async def stream_workflow(
     provider: str = "gemini",
     model: str = "gemini-2.0-flash"
 ) -> AsyncGenerator[str, None]:
-    """Stream workflow results as SSE events."""
+    """Stream workflow results as SSE events using LangGraph astream."""
     
     completion_id = generate_completion_id()
     created = int(time.time())
     
+    lc_messages = messages_to_langchain(messages)
+    user_input = messages[-1].content if messages else ""
+    
+    initial_state: BRSState = {
+        "messages": lc_messages,
+        "user_input": user_input,
+        "response": "",
+        "conversation_id": conversation_id,
+        "context": {"llm_provider": provider},
+        "sources": [],
+        "confidence": 0.0,
+        "query_type": "unknown",
+        "retrieved_docs": [],
+        "agent_feedback": {},
+        "current_agent": "router",
+        "error_count": 0,
+        "max_steps": 10
+    }
+    
     try:
-        # Invoke workflow (TODO: use astream for true token streaming)
-        result = await invoke_workflow(messages, conversation_id, provider)
-        
-        response_text = result.get("response", "")
-        sources = result.get("sources", [])
-        confidence = result.get("confidence", 0.0)
-        
         # Stream initial role
         initial_chunk = ChatCompletionChunk(
             id=completion_id,
@@ -134,22 +146,40 @@ async def stream_workflow(
         )
         yield f"data: {initial_chunk.model_dump_json()}\n\n"
         
-        # Stream content in chunks for real-time feel
-        chunk_size = 20  # Characters per chunk
-        for i in range(0, len(response_text), chunk_size):
-            chunk_text = response_text[i:i + chunk_size]
-            chunk = ChatCompletionChunk(
-                id=completion_id,
-                created=created,
-                model=model,
-                choices=[StreamChoice(
-                    index=0,
-                    delta=DeltaContent(content=chunk_text),
-                    finish_reason=None
-                )]
-            )
-            yield f"data: {chunk.model_dump_json()}\n\n"
-            await asyncio.sleep(0.02)  # Small delay for streaming effect
+        last_response = ""
+        sources = []
+        confidence = 0.0
+        
+        # Use astream for real-time updates from LangGraph
+        async for chunk in brs_workflow.stream(
+            initial_state, 
+            config={"configurable": {"thread_id": conversation_id}}
+        ):
+            # LangGraph chunks contain the state updates from each node
+            for node_name, node_state in chunk.items():
+                if "response" in node_state and node_state["response"]:
+                    new_content = node_state["response"]
+                    # If this is a new response or an update, stream the delta
+                    if new_content != last_response:
+                        delta = new_content[len(last_response):]
+                        if delta:
+                            stream_chunk = ChatCompletionChunk(
+                                id=completion_id,
+                                created=created,
+                                model=model,
+                                choices=[StreamChoice(
+                                    index=0,
+                                    delta=DeltaContent(content=delta),
+                                    finish_reason=None
+                                )]
+                            )
+                            yield f"data: {stream_chunk.model_dump_json()}\n\n"
+                            last_response = new_content
+                
+                if "sources" in node_state:
+                    sources = node_state["sources"]
+                if "confidence" in node_state:
+                    confidence = node_state["confidence"]
         
         # Send final chunk with metadata
         final_chunk = ChatCompletionChunk(
@@ -175,36 +205,42 @@ async def stream_workflow(
 
 
 def store_messages_in_conversation(
+    db: Session,
     conv_id: str,
     user_content: str,
     assistant_content: str,
     metadata: MessageMetadata
 ):
-    """Store messages in the conversation history."""
-    if conv_id not in conversations:
-        conversations[conv_id] = Conversation(id=conv_id)
-    
-    conv = conversations[conv_id]
+    """Store messages in the database."""
+    # Ensure conversation exists
+    db_conv = db.query(ConversationModel).filter(ConversationModel.id == conv_id).first()
+    if not db_conv:
+        db_conv = ConversationModel(id=conv_id)
+        db.add(db_conv)
+        db.commit()
     
     # Add user message
-    user_msg = Message(
+    user_msg = MessageModel(
         id=str(uuid.uuid4()),
         conversation_id=conv_id,
         role="user",
         content=user_content
     )
-    conv.messages.append(user_msg)
+    db.add(user_msg)
     
     # Add assistant message
-    assistant_msg = Message(
+    assistant_msg = MessageModel(
         id=str(uuid.uuid4()),
         conversation_id=conv_id,
         role="assistant",
         content=assistant_content,
-        metadata=metadata
+        message_metadata=metadata.model_dump()
     )
-    conv.messages.append(assistant_msg)
-    conv.updated_at = datetime.utcnow()
+    db.add(assistant_msg)
+    
+    # Update conversation timestamp
+    db_conv.updated_at = datetime.utcnow()
+    db.commit()
 
 
 # ============================================
@@ -212,68 +248,67 @@ def store_messages_in_conversation(
 # ============================================
 
 @router.post("/conversations", response_model=Conversation, tags=["Conversations"])
-async def create_conversation(request: ConversationCreate):
+async def create_conversation(request: ConversationCreate, db: Session = Depends(get_db)):
     """
     Create a new conversation/thread.
-    
-    Use this to start a new conversation session with an optional system prompt.
-    The returned conversation_id can be used in subsequent chat completion requests.
     """
     conv_id = str(uuid.uuid4())
-    conversation = Conversation(
+    db_conv = ConversationModel(
         id=conv_id,
         title=request.title,
-        metadata=request.metadata or {}
+        conversation_metadata=request.conversation_metadata or {}
     )
+    db.add(db_conv)
     
     # Add system message if provided
     if request.system_message:
-        system_msg = Message(
+        system_msg = MessageModel(
             id=str(uuid.uuid4()),
             conversation_id=conv_id,
             role="system",
             content=request.system_message
         )
-        conversation.messages.append(system_msg)
+        db.add(system_msg)
     
-    conversations[conv_id] = conversation
+    db.commit()
+    db.refresh(db_conv)
+    
     logger.info(f"Created conversation: {conv_id}")
-    return conversation
+    return db_conv
 
 
 @router.get("/conversations", response_model=ConversationList, tags=["Conversations"])
 async def list_conversations(
     status: Optional[str] = Query(None, description="Filter by status"),
     limit: int = Query(20, ge=1, le=100, description="Max results"),
-    offset: int = Query(0, ge=0, description="Offset for pagination")
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    db: Session = Depends(get_db)
 ):
     """
     List all conversations with optional filtering.
     """
-    convs = list(conversations.values())
+    query = db.query(ConversationModel)
     
     if status:
-        convs = [c for c in convs if c.status == status]
+        query = query.filter(ConversationModel.status == status)
     
-    # Sort by updated_at descending
-    convs.sort(key=lambda x: x.updated_at, reverse=True)
-    
-    total = len(convs)
-    paginated = convs[offset:offset + limit]
+    total = query.count()
+    convs = query.order_by(ConversationModel.updated_at.desc()).offset(offset).limit(limit).all()
     
     return ConversationList(
-        conversations=paginated,
+        conversations=convs,
         total=total,
         has_more=(offset + limit) < total
     )
 
 
 @router.get("/conversations/{conversation_id}", response_model=Conversation, tags=["Conversations"])
-async def get_conversation(conversation_id: str):
+async def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
     """
     Retrieve a conversation by ID with full message history.
     """
-    if conversation_id not in conversations:
+    db_conv = db.query(ConversationModel).filter(ConversationModel.id == conversation_id).first()
+    if not db_conv:
         raise HTTPException(
             status_code=404,
             detail=APIError(
@@ -285,36 +320,41 @@ async def get_conversation(conversation_id: str):
                 )
             ).model_dump()
         )
-    return conversations[conversation_id]
+    return db_conv
 
 
 @router.patch("/conversations/{conversation_id}", response_model=Conversation, tags=["Conversations"])
-async def update_conversation(conversation_id: str, request: ConversationUpdate):
+async def update_conversation(conversation_id: str, request: ConversationUpdate, db: Session = Depends(get_db)):
     """
     Update conversation status or title.
     """
-    if conversation_id not in conversations:
+    db_conv = db.query(ConversationModel).filter(ConversationModel.id == conversation_id).first()
+    if not db_conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    conv = conversations[conversation_id]
     if request.status:
-        conv.status = request.status
+        db_conv.status = request.status
     if request.title:
-        conv.title = request.title
-    conv.updated_at = datetime.utcnow()
+        db_conv.title = request.title
     
-    return conv
+    db.commit()
+    db.refresh(db_conv)
+    
+    return db_conv
 
 
 @router.delete("/conversations/{conversation_id}", tags=["Conversations"])
-async def delete_conversation(conversation_id: str):
+async def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
     """
     Delete a conversation.
     """
-    if conversation_id not in conversations:
+    db_conv = db.query(ConversationModel).filter(ConversationModel.id == conversation_id).first()
+    if not db_conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    del conversations[conversation_id]
+    db.delete(db_conv)
+    db.commit()
+    
     return {"deleted": True, "conversation_id": conversation_id}
 
 
@@ -325,30 +365,12 @@ async def delete_conversation(conversation_id: str):
 @router.post("/completions", response_model=ChatCompletionResponse, tags=["Chat"])
 async def create_chat_completion(
     request: ChatCompletionRequest,
+    db: Session = Depends(get_db),
     x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
     """
     Create a chat completion.
-    
-    This is the main endpoint for getting AI responses. Compatible with OpenAI's
-    chat completions API format with BRS-specific extensions for sources and
-    confidence scores.
-    
-    **Features:**
-    - Set `stream: true` for Server-Sent Events streaming
-    - Provide `conversation_id` to continue existing conversations
-    - Sources and confidence scores included in response
-    
-    **Example:**
-    ```json
-    {
-        "messages": [
-            {"role": "user", "content": "How do I register a company?"}
-        ],
-        "stream": false
-    }
-    ```
     """
     request_id = x_request_id or generate_request_id()
     start_time = time.time()
@@ -356,8 +378,11 @@ async def create_chat_completion(
     try:
         # Get or create conversation
         conv_id = request.conversation_id or str(uuid.uuid4())
-        if conv_id not in conversations:
-            conversations[conv_id] = Conversation(id=conv_id)
+        db_conv = db.query(ConversationModel).filter(ConversationModel.id == conv_id).first()
+        if not db_conv:
+            db_conv = ConversationModel(id=conv_id)
+            db.add(db_conv)
+            db.commit()
         
         # Handle streaming
         if request.stream:
@@ -374,7 +399,7 @@ async def create_chat_completion(
                     "X-Conversation-ID": conv_id,
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no"  # Disable nginx buffering
+                    "X-Accel-Buffering": "no"
                 }
             )
         
@@ -390,8 +415,9 @@ async def create_chat_completion(
         sources = result.get("sources", [])
         confidence = result.get("confidence", 0.0)
         
-        # Store in conversation history
+        # Store in database
         store_messages_in_conversation(
+            db,
             conv_id,
             request.messages[-1].content,
             response_text,
@@ -447,23 +473,16 @@ async def create_chat_completion(
 async def websocket_chat(websocket: WebSocket):
     """
     WebSocket endpoint for real-time bidirectional chat.
-    
-    **Connect:** `ws://localhost:8000/api/v1/chat/ws`
-    
-    **Send message:**
-    ```json
-    {"type": "message", "content": "Your question", "conversation_id": "optional"}
-    ```
-    
-    **Receive:**
-    ```json
-    {"type": "response", "content": "...", "sources": [...], "confidence": 0.85}
-    ```
     """
     await websocket.accept()
     
+    from core.database import SessionLocal
+    db = SessionLocal()
+    
     conversation_id = str(uuid.uuid4())
-    conversations[conversation_id] = Conversation(id=conversation_id)
+    db_conv = ConversationModel(id=conversation_id)
+    db.add(db_conv)
+    db.commit()
     
     try:
         # Send connection confirmation
@@ -488,56 +507,104 @@ async def websocket_chat(websocket: WebSocket):
                 })
                 continue
             
-            # Build messages from conversation history
+            # Ensure conversation exists
+            db_conv = db.query(ConversationModel).filter(ConversationModel.id == conv_id).first()
+            if not db_conv:
+                db_conv = ConversationModel(id=conv_id)
+                db.add(db_conv)
+                db.commit()
+            
+            # Build messages from database history
             messages = []
-            if conv_id in conversations:
-                for msg in conversations[conv_id].messages:
-                    messages.append(MessageContent(role=msg.role, content=msg.content))
+            for msg in db_conv.messages:
+                messages.append(MessageContent(role=msg.role, content=msg.content))
             messages.append(MessageContent(role="user", content=content))
             
             if stream:
                 # Stream response
                 await websocket.send_json({"type": "stream_start"})
                 
-                result = await invoke_workflow(messages, conv_id, "gemini")
-                response_text = result.get("response", "")
+                lc_messages = messages_to_langchain(messages)
+                initial_state: BRSState = {
+                    "messages": lc_messages,
+                    "user_input": content,
+                    "response": "",
+                    "conversation_id": conv_id,
+                    "context": {"llm_provider": "gemini"},
+                    "sources": [],
+                    "confidence": 0.0,
+                    "query_type": "unknown",
+                    "retrieved_docs": [],
+                    "agent_feedback": {},
+                    "current_agent": "router",
+                    "error_count": 0,
+                    "max_steps": 10
+                }
                 
-                # Stream in chunks
-                chunk_size = 20
-                for i in range(0, len(response_text), chunk_size):
-                    chunk = response_text[i:i + chunk_size]
-                    await websocket.send_json({
-                        "type": "stream_chunk",
-                        "content": chunk
-                    })
-                    await asyncio.sleep(0.02)
+                last_response = ""
+                sources = []
+                confidence = 0.0
+                
+                async for chunk in brs_workflow.stream(
+                    initial_state,
+                    config={"configurable": {"thread_id": conv_id}}
+                ):
+                    for node_name, node_state in chunk.items():
+                        if "response" in node_state and node_state["response"]:
+                            new_content = node_state["response"]
+                            if new_content != last_response:
+                                delta = new_content[len(last_response):]
+                                if delta:
+                                    await websocket.send_json({
+                                        "type": "stream_chunk",
+                                        "content": delta
+                                    })
+                                    last_response = new_content
+                        
+                        if "sources" in node_state:
+                            sources = node_state["sources"]
+                        if "confidence" in node_state:
+                            confidence = node_state["confidence"]
+                
+                # Store final response
+                store_messages_in_conversation(
+                    db,
+                    conv_id,
+                    content,
+                    last_response,
+                    MessageMetadata(sources=sources, confidence=confidence)
+                )
                 
                 await websocket.send_json({
                     "type": "stream_end",
-                    "sources": result.get("sources", []),
-                    "confidence": result.get("confidence", 0.0),
+                    "sources": sources,
+                    "confidence": confidence,
                     "conversation_id": conv_id
                 })
             else:
                 # Non-streaming response
                 result = await invoke_workflow(messages, conv_id, "gemini")
+                response_text = result.get("response", "")
+                sources = result.get("sources", [])
+                confidence = result.get("confidence", 0.0)
                 
                 # Store messages
                 store_messages_in_conversation(
+                    db,
                     conv_id,
                     content,
-                    result.get("response", ""),
+                    response_text,
                     MessageMetadata(
-                        sources=result.get("sources", []),
-                        confidence=result.get("confidence", 0.0)
+                        sources=sources,
+                        confidence=confidence
                     )
                 )
                 
                 await websocket.send_json({
                     "type": "response",
-                    "content": result.get("response", ""),
-                    "sources": result.get("sources", []),
-                    "confidence": result.get("confidence", 0.0),
+                    "content": response_text,
+                    "sources": sources,
+                    "confidence": confidence,
                     "conversation_id": conv_id
                 })
             
@@ -553,3 +620,5 @@ async def websocket_chat(websocket: WebSocket):
         except:
             pass
         await websocket.close(code=1011)
+    finally:
+        db.close()

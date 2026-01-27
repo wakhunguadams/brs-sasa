@@ -13,6 +13,8 @@ import logging
 from core.config import settings, validate_settings
 from api.v1 import router as api_v1_router
 from core.logger import setup_logger
+from core.database import init_db
+from core.workflow import brs_workflow
 
 # Setup logger
 logger = setup_logger()
@@ -24,6 +26,22 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting BRS-SASA application...")
+
+    # Initialize database
+    try:
+        init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {str(e)}")
+        raise
+
+    # Initialize workflow
+    try:
+        await brs_workflow.initialize()
+        logger.info("Workflow initialized successfully")
+    except Exception as e:
+        logger.error(f"Workflow initialization failed: {str(e)}")
+        raise
 
     # Validate settings on startup
     try:
@@ -37,6 +55,11 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down BRS-SASA application...")
+    try:
+        await brs_workflow.close()
+        logger.info("Workflow closed successfully")
+    except Exception as e:
+        logger.error(f"Error closing workflow: {str(e)}")
 
 app = FastAPI(
     title="BRS-SASA: AI-Powered Conversational Platform",

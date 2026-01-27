@@ -1,119 +1,281 @@
-import os
-import logging
+"""
+Knowledge Base - ChromaDB wrapper for vector storage and retrieval
+"""
+import chromadb
+from chromadb.config import Settings
 from typing import List, Dict, Any, Optional
-from pathlib import Path
-
-from utils.document_loader import DocumentProcessor
-from utils.vector_db import VectorDBManager
-from core.config import settings
+import os
+import uuid
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-class KnowledgeBaseManager:
+
+class KnowledgeBase:
     """
-    Manager class for the knowledge base that handles document ingestion,
-    storage in vector database, and retrieval for RAG operations
+    Knowledge base using ChromaDB for vector storage
+    Singleton pattern for global access
     """
     
-    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
-        self.document_processor = DocumentProcessor(
-            chunk_size=chunk_size, 
-            chunk_overlap=chunk_overlap
-        )
-        self.vector_db_manager = VectorDBManager(db_type=settings.VECTOR_DB_TYPE)
+    def __init__(self, persist_dir: str = "./chroma_data", collection_name: str = "brs_documents"):
+        self.persist_dir = persist_dir
+        self.collection_name = collection_name
+        self.client = None
+        self.collection = None
         self.initialized = False
+        
+        # Ensure persist directory exists
+        os.makedirs(persist_dir, exist_ok=True)
     
     async def initialize(self):
-        """
-        Initialize the knowledge base components
-        """
-        if not self.initialized:
-            await self.vector_db_manager.initialize_db()
-            self.initialized = True
-            logger.info("Knowledge base initialized successfully")
-    
-    async def ingest_documents_from_directory(self, directory_path: str):
-        """
-        Ingest all documents from a directory into the knowledge base
-        Documents are automatically chunked for better retrieval
-        """
-        if not self.initialized:
-            await self.initialize()
+        """Initialize ChromaDB client and collection"""
+        if self.initialized:
+            logger.info("Knowledge base already initialized")
+            return
         
         try:
-            # Load and chunk documents from directory
-            logger.info(f"Loading and chunking documents from {directory_path}")
-            documents = self.document_processor.load_documents_from_directory(
-                directory_path, 
-                chunk=True
+            # Create persistent client
+            self.client = chromadb.PersistentClient(
+                path=self.persist_dir,
+                settings=Settings(
+                    anonymized_telemetry=False,
+                    allow_reset=True
+                )
             )
             
-            if not documents:
-                logger.warning(f"No documents found in {directory_path}")
-                return []
+            # Get or create collection
+            self.collection = self.client.get_or_create_collection(
+                name=self.collection_name,
+                metadata={"hnsw:space": "cosine"}
+            )
             
-            # Add documents to vector database
-            logger.info(f"Adding {len(documents)} document chunks to vector database")
-            doc_ids = await self.vector_db_manager.add_documents(documents)
+            self.initialized = True
             
-            logger.info(f"Successfully ingested {len(documents)} document chunks into knowledge base")
-            return doc_ids
+            # Log collection stats
+            count = self.collection.count()
+            logger.info(f"Knowledge base initialized: {count} documents in collection '{self.collection_name}'")
+            
         except Exception as e:
-            logger.error(f"Error ingesting documents from {directory_path}: {str(e)}")
-            raise
-    
-    async def ingest_single_document(self, file_path: str):
-        """
-        Ingest a single document into the knowledge base
-        Document is automatically chunked for better retrieval
-        """
-        if not self.initialized:
-            await self.initialize()
-        
-        try:
-            # Load and chunk the document
-            logger.info(f"Loading and chunking document: {file_path}")
-            chunked_docs = self.document_processor.load_and_chunk_document(file_path)
-            
-            if not chunked_docs:
-                logger.warning(f"No content extracted from {file_path}")
-                return None
-            
-            # Add chunks to vector database
-            logger.info(f"Adding {len(chunked_docs)} chunks to vector database: {file_path}")
-            doc_ids = await self.vector_db_manager.add_documents(chunked_docs)
-            
-            logger.info(f"Successfully ingested document: {file_path}")
-            return doc_ids[0] if doc_ids else None
-        except Exception as e:
-            logger.error(f"Error ingesting document {file_path}: {str(e)}")
+            logger.error(f"Failed to initialize knowledge base: {str(e)}")
             raise
     
     async def search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """
-        Search the knowledge base for relevant information
+        Search the knowledge base
+        
+        Args:
+            query: Search query
+            top_k: Number of results to return
+        
+        Returns:
+            List of chunk dictionaries with content, source, and distance
         """
         if not self.initialized:
             await self.initialize()
         
         try:
-            results = await self.vector_db_manager.search(query, top_k)
-            logger.debug(f"Found {len(results)} results for query: {query[:50]}...")
-            return results
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=top_k,
+                include=["documents", "metadatas", "distances"]
+            )
+            
+            chunks = []
+            
+            if results['documents'] and results['documents'][0]:
+                for i, doc in enumerate(results['documents'][0]):
+                    chunk = {
+                        'content': doc,
+                        'source': results['metadatas'][0][i].get('source', 'Unknown'),
+                        'distance': results['distances'][0][i] if results['distances'] else 0.0
+                    }
+                    
+                    # Add section if available
+                    if 'section' in results['metadatas'][0][i]:
+                        chunk['section'] = results['metadatas'][0][i]['section']
+                    
+                    chunks.append(chunk)
+            
+            logger.debug(f"Search for '{query}' returned {len(chunks)} results")
+            return chunks
+            
         except Exception as e:
-            logger.error(f"Error searching knowledge base: {str(e)}")
+            logger.error(f"Search error: {str(e)}")
+            return []
+    
+    async def add_documents(
+        self,
+        documents: List[str],
+        metadatas: List[Dict[str, Any]],
+        ids: Optional[List[str]] = None
+    ):
+        """
+        Add documents to the knowledge base
+        
+        Args:
+            documents: List of document texts
+            metadatas: List of metadata dictionaries
+            ids: Optional list of document IDs (generated if not provided)
+        """
+        if not self.initialized:
+            await self.initialize()
+        
+        if not documents:
+            logger.warning("No documents to add")
+            return
+        
+        # Generate IDs if not provided
+        if ids is None:
+            ids = [str(uuid.uuid4()) for _ in documents]
+        
+        try:
+            self.collection.add(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids
+            )
+            
+            logger.info(f"Added {len(documents)} documents to knowledge base")
+            
+        except Exception as e:
+            logger.error(f"Error adding documents: {str(e)}")
             raise
     
-    async def get_document_count(self) -> int:
+    async def add_chunks(self, chunks: List[Dict[str, Any]]):
         """
-        Get the total count of documents in the knowledge base
-        This is a simplified implementation - in a real system, 
-        this would query the vector database for actual count
+        Add pre-chunked documents to the knowledge base
+        
+        Args:
+            chunks: List of chunk dictionaries with 'content' and 'metadata'
         """
-        # For now, return a placeholder implementation
-        # In a real system, this would connect to the vector DB to get actual count
-        return 0  # Placeholder - would need to implement actual count from vector DB
+        if not chunks:
+            logger.warning("No chunks to add")
+            return
+        
+        documents = []
+        metadatas = []
+        ids = []
+        
+        for chunk in chunks:
+            content = chunk.get('content', '')
+            metadata = chunk.get('metadata', {})
+            
+            if content:
+                documents.append(content)
+                metadatas.append(metadata)
+                ids.append(str(uuid.uuid4()))
+        
+        await self.add_documents(documents, metadatas, ids)
+    
+    async def clear(self):
+        """Clear all documents from the knowledge base"""
+        if not self.initialized:
+            await self.initialize()
+        
+        try:
+            # Delete and recreate collection
+            self.client.delete_collection(self.collection_name)
+            self.collection = self.client.create_collection(
+                name=self.collection_name,
+                metadata={"hnsw:space": "cosine"}
+            )
+            logger.info("Knowledge base cleared")
+            
+        except Exception as e:
+            logger.error(f"Error clearing knowledge base: {str(e)}")
+            raise
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get knowledge base statistics"""
+        if not self.initialized:
+            return {"initialized": False}
+        
+        try:
+            count = self.collection.count()
+            return {
+                "initialized": True,
+                "collection_name": self.collection_name,
+                "document_count": count,
+                "persist_dir": self.persist_dir
+            }
+        except Exception as e:
+            logger.error(f"Error getting stats: {str(e)}")
+            return {"initialized": True, "error": str(e)}
 
-# Global knowledge base instance
-knowledge_base = KnowledgeBaseManager()
+    def is_empty(self) -> bool:
+        """Check if the knowledge base is empty"""
+        if not self.initialized:
+            # We can't know for sure without initializing, but we'll return True to trigger initialization
+            return True
+        return self.collection.count() == 0
+    
+    async def ingest_single_document(self, file_path: str) -> Optional[str]:
+        """
+        Ingest a single document file
+        
+        Args:
+            file_path: Path to document
+        
+        Returns:
+            Document ID or None if failed
+        """
+        from utils.document_loader import load_document, chunk_documents
+        
+        try:
+            # Load document
+            doc = load_document(file_path)
+            
+            if not doc.get('content'):
+                logger.error(f"No content loaded from {file_path}")
+                return None
+            
+            # Chunk document
+            chunks = chunk_documents([doc])
+            
+            # Add to knowledge base
+            await self.add_chunks(chunks)
+            
+            logger.info(f"Ingested document: {file_path} ({len(chunks)} chunks)")
+            return str(uuid.uuid4())
+            
+        except Exception as e:
+            logger.error(f"Error ingesting document {file_path}: {str(e)}")
+            return None
+    
+    async def ingest_documents_from_directory(self, directory: str, extensions: List[str] = None) -> List[str]:
+        """
+        Ingest all documents from a directory
+        
+        Args:
+            directory: Directory path
+            extensions: File extensions to process
+        
+        Returns:
+            List of document IDs
+        """
+        from utils.document_loader import load_documents_from_directory, chunk_documents
+        
+        try:
+            # Load documents
+            documents = load_documents_from_directory(directory, extensions)
+            
+            if not documents:
+                logger.warning(f"No documents found in {directory}")
+                return []
+            
+            # Chunk documents
+            chunks = chunk_documents(documents)
+            
+            # Add to knowledge base
+            await self.add_chunks(chunks)
+            
+            logger.info(f"Ingested {len(documents)} documents from {directory} ({len(chunks)} chunks)")
+            return [str(uuid.uuid4()) for _ in documents]
+            
+        except Exception as e:
+            logger.error(f"Error ingesting documents from {directory}: {str(e)}")
+            return []
+
+
+# Global singleton instance
+knowledge_base = KnowledgeBase()

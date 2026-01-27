@@ -43,7 +43,7 @@ def start_api_server():
     """
     Start the FastAPI server
     """
-    from brs_sasa.core.config import settings
+    from core.config import settings
     import uvicorn
 
     print(f"Starting {settings.APP_NAME} API server on {settings.HOST}:{settings.PORT}")

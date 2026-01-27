@@ -3,27 +3,37 @@
 ## Table of Contents
 1. [Overview](#overview)
 2. [Architecture](#architecture)
-3. [Components](#components)
-4. [Installation](#installation)
-5. [Configuration](#configuration)
-6. [API Reference](#api-reference)
-7. [Testing](#testing)
-8. [Deployment](#deployment)
+3. [What's New: LangGraph 2026 Refactor](#whats-new-langgraph-2026-refactor)
+4. [Components](#components)
+5. [Installation](#installation)
+6. [Configuration](#configuration)
+7. [API Reference](#api-reference)
+8. [Testing](#testing)
+9. [Deployment](#deployment)
 
 ## Overview
 
-BRS-SASA is an intelligent conversational AI platform for the Business Registration Service (BRS) of Kenya. The platform uses advanced RAG (Retrieval-Augmented Generation) technology powered by **LangGraph** and **Google Gemini 2.0 Flash** to answer questions about business registration, explain draft legislation, and provide information about fees, requirements, and processes.
+BRS-SASA is an **intelligent agentic AI platform** for the Business Registration Service (BRS) of Kenya. Built using cutting-edge **LangGraph 2026 best practices**, the platform employs autonomous AI agents that intelligently decide when and how to retrieve information, making it a true **Agentic RAG** system rather than a simple chatbot.
 
 ### Key Features
-- **Intelligent FAQ & Troubleshooting**: Answers questions about registration processes, requirements, fees, timelines
-- **Legislative Document Assistant**: Makes legal documents accessible through conversation
-- **RAG-Powered Knowledge Base**: ChromaDB vector database with intelligent document chunking
-- **Multi-Provider LLM Support**: Factory pattern supporting Gemini, OpenAI, and Anthropic
-- **Source Citations**: Every response includes document sources and confidence scores
+- **🤖 Autonomous Tool-Calling Agents**: AI agents that autonomously decide when to search the knowledge base
+- **📚 Intelligent FAQ & Troubleshooting**: Answers questions about registration processes, requirements, fees, timelines
+- **⚖️ Legislative Document Assistant**: Makes legal documents accessible through conversation
+- **🔍 Vector-Based RAG**: ChromaDB with embeddings (not raw file search) for semantic understanding
+- **🔗 Multi-Provider LLM Support**: Factory pattern supporting Gemini, OpenAI, and Anthropic
+- **📖 Source Citations**: Every response includes document sources and confidence scores
+- **💾 Persistent Memory**: Conversation history maintained across sessions with checkpointing
+
+### What Makes This "Agentic"?
+Unlike traditional chatbots that follow fixed scripts, BRS-SASA uses **autonomous agents** that:
+1. **Decide** whether a query needs knowledge retrieval or can be answered directly
+2. **Choose** which tools to use (currently: knowledge base search, future: CRM, payments, etc.)
+3. **Reason** through multi-step problems using the ReAct pattern (Reason → Act → Observe → Respond)
+4. **Remember** conversation context to handle follow-up questions
 
 ## Architecture
 
-The system follows a multi-agent architecture built on FastAPI with LangGraph orchestration:
+The system follows a **multi-agent architecture** built on FastAPI with LangGraph orchestration, following 2026 industry best practices:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -32,23 +42,96 @@ The system follows a multi-agent architecture built on FastAPI with LangGraph or
 ├─────────────────────────────────────────────────────────────┤
 │                    FastAPI Backend                          │
 │                   http://localhost:8000                     │
+│              OpenAI-Compatible Chat API                     │
 ├─────────────────────────────────────────────────────────────┤
-│                LangGraph Multi-Agent System                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────┐   │
-│  │   Router    │→ │  RAG Agent  │→ │ Response Formatter│   │
-│  │    Node     │  │    Node     │  │      Node         │   │
-│  └─────────────┘  └─────────────┘  └──────────────────┘   │
-│         ↓              ↓                                   │
-│  ┌─────────────┐  ┌─────────────┐                         │
-│  │Conversation │  │   Error     │                         │
-│  │   Agent     │  │  Handler    │                         │
-│  └─────────────┘  └─────────────┘                         │
+│           LangGraph Agentic Workflow (2026 Pattern)         │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │  Router Node (LLM-based intent classification)       │  │
+│  └────────────┬─────────────────────────┬───────────────┘  │
+│               │                         │                   │
+│       ┌───────▼────────┐        ┌──────▼────────┐         │
+│       │  RAG Agent     │        │ Conversation  │         │
+│       │  (Tool-Calling)│        │    Agent      │         │
+│       │                │        │               │         │
+│       │  🔧 Tools:     │        │  Simple Chat  │         │
+│       │  • search_brs  │        │               │         │
+│       │    _knowledge  │        │               │         │
+│       └───────┬────────┘        └──────┬────────┘         │
+│               │                         │                   │
+│               └────────┬────────────────┘                   │
+│                        │                                    │
+│               ┌────────▼────────┐                          │
+│               │   Response      │                          │
+│               │   Formatter     │                          │
+│               └─────────────────┘                          │
 ├─────────────────────────────────────────────────────────────┤
-│  LLM Factory (Gemini 2.0 Flash) │ ChromaDB Vector Store   │
+│  LangChain ChatModels    │  ChromaDB Vector Store          │
+│  (Gemini 2.0 Flash)      │  (Embeddings-based search)      │
 ├─────────────────────────────────────────────────────────────┤
 │  Knowledge Base: Acts, Regulations, FAQs, Extended Info   │
+│  • Companies Act 2015    • LLP Act 2011                    │
+│  • Partnerships Act 2012 • Business Names Act 1951         │
+│  • Beneficial Ownership Regulations                        │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Architecture Highlights
+
+1. **Pure Function Nodes**: Each node follows `(state) → partial_state_update` pattern
+2. **Tool Binding**: RAG agent uses `.bind_tools()` - LLM autonomously decides when to search
+3. **Typed State**: `TypedDict` with reducers for safe, predictable state management
+4. **Persistent Checkpointing**: `AsyncSqliteSaver` for conversation memory across restarts
+
+## What's New: LangGraph 2026 Refactor
+
+### Major Improvements
+
+#### 1. **Tool-Calling Architecture** (The Game Changer)
+**Before**: Code explicitly called the knowledge base for every query
+**After**: LLM autonomously decides when to use the `search_brs_knowledge` tool
+
+```python
+# RAG Agent now uses tool binding
+self.llm_with_tools = llm.bind_tools([search_brs_knowledge])
+```
+
+**Why This Matters**: The AI can now:
+- Answer simple questions directly without unnecessary searches
+- Decide when it needs more information
+- Chain multiple tool calls for complex queries
+- Easily integrate new tools (CRM, payments, analytics) in Phase 2
+
+#### 2. **LangChain ChatModel Migration**
+**Before**: Custom LLM wrapper with `.generate_response()`
+**After**: Industry-standard `BaseChatModel` with `.ainvoke(messages)`
+
+**Benefits**:
+- Native tool-calling support
+- Better streaming capabilities
+- Easier to swap LLM providers
+- Access to latest LangChain features
+
+#### 3. **Pure Function Nodes**
+**Before**: Nodes with complex logic and side effects
+**After**: Pure functions: `async def node(state) → dict`
+
+**Benefits**:
+- Easier to test and debug
+- Predictable behavior
+- Better observability
+- Simpler to extend
+
+#### 4. **Embeddings-Based Search** (Confirmed Working)
+Documents are **NOT** read as raw files during search. Instead:
+1. Documents are chunked into semantic segments
+2. Each chunk is converted to a vector embedding (high-dimensional numerical representation)
+3. Embeddings are stored in ChromaDB
+4. User queries are also embedded
+5. Cosine similarity search finds the most relevant chunks
+
+**Why This Matters**: Semantic understanding, not just keyword matching. The system can find relevant information even if the exact words aren't used.
+
 
 ## Components
 
@@ -129,6 +212,18 @@ async def rag_agent_node(state: BRSState) -> Dict[str, Any]:
     # 4. Extract and clean source filenames
     # Returns: {response, sources, confidence, retrieved_docs}
 ```
+
+### 4. Knowledge Retrieval (RAG)
+The system uses a state-of-the-art RAG pipeline:
+- **Embeddings**: Documents are NOT read directly during search. Instead, they are chunked and converted into high-dimensional vector embeddings using Google's embedding models.
+- **Vector Store**: These embeddings are stored in **ChromaDB**. When a user asks a question, the query is also embedded, and a "cosine similarity" search is performed to find the most relevant chunks.
+- **Tools**: The knowledge base search is formalized as a **LangChain Tool** (`search_brs_knowledge`). This allows the agents to intelligently decide when to query the knowledge base.
+
+### 5. Agentic Orchestration
+Unlike simple chatbots, BRS-SASA uses an **Agentic Graph** (LangGraph):
+- **Autonomous Routing**: The Router agent uses an LLM to classify intent.
+- **Tool-Aware Agents**: Agents are equipped with tools (like the knowledge base search) which they can invoke as needed.
+- **Multi-Turn Memory**: The system maintains a persistent conversation history, allowing it to resolve ambiguous follow-ups (e.g., "And what are the fees for that?").
 
 ###### Conversation Agent Node (`agents/conversation_agent.py`)
 Handles general conversation and greetings:
@@ -485,24 +580,15 @@ docker build -t brs-sasa .
 docker run -p 8000:8000 -e GEMINI_API_KEY=your_key brs-sasa
 ```
 
-## Phase 1 Implementation Status
+## Phase 1 Implementation Status: COMPLETE (Jan 2026)
 
 ### Completed
-- [x] FastAPI web framework with REST + WebSocket endpoints
-- [x] LangGraph multi-agent orchestration with StateGraph
-- [x] RAG Agent with ChromaDB vector store
-- [x] Conversation Agent for general queries
-- [x] Router Node for intelligent query routing
-- [x] Response Formatter with source citations
-- [x] Error Handler with retry logic
-- [x] Multi-provider LLM factory (Gemini 2.0 Flash default)
-- [x] Section-aware document chunking (preserves structure)
-- [x] Query expansion for improved retrieval accuracy
-- [x] OpenAI-compatible API with SSE streaming
-- [x] Conversation persistence (server-side)
-- [x] Streamlit Demo UI with native components
-- [x] Unit tests (9 passing)
-- [x] Extended knowledge base (fees, contacts, processes)
+- [x] **Agentic Orchestration**: LangGraph multi-agent system with persistent state.
+- [x] **RAG Knowledge Base**: 4,000+ chunks from Acts, Regulations, and FAQs.
+- [x] **Advanced Retrieval**: LLM-based query rephrasing for multi-turn accuracy.
+- [x] **Production API**: FastAPI with SSE streaming and conversation persistence.
+- [x] **Demo UI**: Streamlit interface with native chat components.
+- [x] **Infrastructure**: SQLAlchemy database and AsyncSqliteSaver for LangGraph.
 
 ### Verified Query Coverage
 | Query Type | Status | Example Response |
@@ -513,10 +599,28 @@ docker run -p 8000:8000 -e GEMINI_API_KEY=your_key brs-sasa
 | Foreign Company Fees | PASS | KES 25,000+ registration |
 | Contact Details | PASS | Full address, phone, email |
 | Processing Times | PASS | 24-48 hours |
+| Multi-turn Context | PASS | Understands "And what are the fees for that?" |
 
-### Future Phases
-- Phase 2: Legislative Agent, Feedback Agent, Multi-language support
-- Phase 3: CRM integration, Database integration, Statistics Agent
+## Phase 2 Roadmap: Advanced Intelligence & Integration
+
+### 1. Legislative Analysis Agent
+- Deep analysis of draft bills and proposed legislation.
+- Automated comparison between current Acts and proposed amendments.
+- Public participation feedback summarization.
+
+### 2. Enterprise Integration
+- **CRM Integration**: Connect to BRS internal systems to check application status.
+- **Payment Gateway**: Integration with eCitizen/M-Pesa for fee payment guidance.
+- **User Authentication**: Secure login for personalized registration tracking.
+
+### 3. Multi-Channel & Multi-Language
+- **Swahili Support**: Full localization for wider accessibility.
+- **WhatsApp/Telegram Integration**: Reach users on their preferred mobile platforms.
+- **Voice Interface**: Support for voice queries in local languages.
+
+### 4. Advanced Analytics & Governance
+- **Staff Dashboard**: Review AI performance and "Human-in-the-loop" approval for complex queries.
+- **Trend Analysis**: Identify common pain points in the registration process based on user queries.
 
 ## License
 
