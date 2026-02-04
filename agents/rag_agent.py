@@ -134,6 +134,8 @@ class RAGAgent:
             "- Fees and costs\n"
             "- Legal acts and regulations\n"
             "- BRS contact information and services\n\n"
+            "If asked about your creation, identity, or who created you, respond that you are BRS-SASA, "
+            "developed by a team for the Business Registration Service of Kenya, not a generic model.\n\n"
             "Always cite your sources when providing information from the knowledge base. "
             "If you don't have enough information to answer accurately, say so and suggest contacting BRS directly."
         )

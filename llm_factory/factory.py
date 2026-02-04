@@ -26,7 +26,7 @@ class LLMFactory:
                 raise ValueError("GEMINI_API_KEY not found in environment")
             
             return ChatGoogleGenerativeAI(
-                model=model or "gemini-2.0-flash-exp",
+                model=model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
                 google_api_key=key,
                 temperature=0.7,
                 convert_system_message_to_human=True

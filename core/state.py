@@ -64,9 +64,11 @@ def should_route_to_rag(state: BRSState) -> str:
 
 def route_query_type(state: BRSState) -> str:
     """
-    Route to appropriate agent based on query type
+    Route to appropriate agent based on LLM-determined query type from router node
     """
-    return should_route_to_rag(state)
+    # Use the agent determined by the LLM-based router node
+    current_agent = state.get("current_agent", "conversation_agent")
+    return current_agent
 
 def route_after_processing(state: BRSState) -> str:
     """

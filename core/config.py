@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # LLM settings
     DEFAULT_LLM_PROVIDER: str = Field(default="gemini", description="Default LLM provider to use")
     GEMINI_API_KEY: Optional[str] = Field(default=None, description="Google Gemini API key")
+    GEMINI_MODEL: str = Field(default="gemini-1.5-flash", description="Google Gemini model to use")
     OPENAI_API_KEY: Optional[str] = Field(default=None, description="OpenAI API key")
     ANTHROPIC_API_KEY: Optional[str] = Field(default=None, description="Anthropic API key")
 

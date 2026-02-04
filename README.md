@@ -1,6 +1,6 @@
 # BRS-SASA: AI-Powered Conversational Platform
 
-BRS-SASA is an intelligent conversational AI platform for the Business Registration Service (BRS) of Kenya. The platform uses advanced RAG (Retrieval-Augmented Generation) technology powered by **LangGraph** and **Google Gemini 2.0 Flash** to answer questions about business registration, explain draft legislation, collect public feedback, and provide real-time statistics - all through natural conversation.
+BRS-SASA is an intelligent conversational AI platform for the Business Registration Service (BRS) of Kenya. The platform uses advanced RAG (Retrieval-Augmented Generation) technology powered by **LangGraph** and **Google Gemini 2.5 Flash** to answer questions about business registration, explain draft legislation, collect public feedback, and provide real-time statistics - all through natural conversation.
 
 ## Quick Start
 
@@ -87,21 +87,35 @@ The system implements a multi-agent architecture using **LangGraph** for proper 
 │                   http://localhost:8000                     │
 ├─────────────────────────────────────────────────────────────┤
 │                LangGraph Multi-Agent System                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────┐   │
-│  │   Router    │→ │  RAG Agent  │→ │ Response Formatter│   │
-│  │    Node     │  │    Node     │  │      Node         │   │
-│  └─────────────┘  └─────────────┘  └──────────────────┘   │
-│         ↓              ↓                                   │
-│  ┌─────────────┐  ┌─────────────┐                         │
-│  │Conversation │  │   Error     │                         │
-│  │   Agent     │  │  Handler    │                         │
-│  └─────────────┘  └─────────────┘                         │
+│                                                             │
+│  ┌─────────────┐                                           │
+│  │   Router    │───────────────────────────────────────────┐│
+│  │    Node     │                                           ││
+│  └─────┬───────┘                              ┌──────────┴─┤
+│        │                                      │   Error    ││
+│        │                                      │  Handler   ││
+│   ┌────▼─────┐  ┌──────────────────┐         │    Node    ││
+│   │ RAG Agent│  │ Response Formatter│         └────────────┘│
+│   │   Node   │  │      Node         │                       │
+│   └────┬─────┘  └─────────▲────────┘                       │
+│        │                  │                                │
+│   ┌────▼──────────────────┼────────────────────────────────┐│
+│   │ Conversation Agent    │                                ││
+│   │        Node           │                                ││
+│   └───────────────────────┘                                ││
 ├─────────────────────────────────────────────────────────────┤
-│  LLM Factory (Gemini 2.0 Flash) │ ChromaDB Vector Store   │
+│  LLM Factory (gemini-2.5-flash) │ ChromaDB Vector Store    │
 ├─────────────────────────────────────────────────────────────┤
-│  Knowledge Base: Acts, Regulations, FAQs, Extended Info   │
+│  Knowledge Base: Acts, Regulations, FAQs, Extended Info     │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+The architecture follows LangGraph best practices with conditional routing:
+- **Router Node**: Determines if query needs RAG or conversation handling
+- **RAG Agent**: Processes knowledge-based queries with document retrieval
+- **Conversation Agent**: Handles general conversation and greetings
+- **Response Formatter**: Formats responses with sources and confidence
+- **Error Handler**: Manages errors gracefully with fallback responses
 
 ## Installation
 
@@ -196,7 +210,7 @@ curl -X POST http://localhost:8000/api/v1/chat/completions \
 {
   "id": "chatcmpl-abc123",
   "object": "chat.completion",
-  "model": "gemini-2.0-flash",
+  "model": "gemini-2.5-flash",
   "choices": [{
     "message": {
       "role": "assistant",

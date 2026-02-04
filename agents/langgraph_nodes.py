@@ -60,7 +60,9 @@ async def router_node(state: BRSState) -> Dict[str, Any]:
         from langchain_core.messages import SystemMessage
         
         messages = [
-            SystemMessage(content="Classify this query as 'knowledge' (needs BRS info) or 'conversation' (general chat). Respond with only one word."),
+            SystemMessage(content="Classify this query as 'knowledge' (needs BRS info from documents) or 'conversation' (general chat about identity, greetings, small talk). "
+                                "Queries about who created the AI, who built it, or the AI's identity should be classified as 'conversation'. "
+                                "Respond with only one word: 'knowledge' or 'conversation'."),
             HumanMessage(content=f"Query: {user_input}")
         ]
 

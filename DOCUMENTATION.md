@@ -48,26 +48,26 @@ The system follows a **multi-agent architecture** built on FastAPI with LangGrap
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐  │
 │  │  Router Node (LLM-based intent classification)       │  │
-│  └────────────┬─────────────────────────┬───────────────┘  │
-│               │                         │                   │
-│       ┌───────▼────────┐        ┌──────▼────────┐         │
-│       │  RAG Agent     │        │ Conversation  │         │
-│       │  (Tool-Calling)│        │    Agent      │         │
-│       │                │        │               │         │
-│       │  🔧 Tools:     │        │  Simple Chat  │         │
-│       │  • search_brs  │        │               │         │
-│       │    _knowledge  │        │               │         │
-│       └───────┬────────┘        └──────┬────────┘         │
-│               │                         │                   │
-│               └────────┬────────────────┘                   │
-│                        │                                    │
-│               ┌────────▼────────┐                          │
-│               │   Response      │                          │
-│               │   Formatter     │                          │
-│               └─────────────────┘                          │
+│  └────────────┬─────────────────┬───────────────────────┘  │
+│               │                 │                           │
+│       ┌───────▼────────┐  ┌────▼─────────────┐           │
+│       │  RAG Agent     │  │ Conversation     │           │
+│       │  (Tool-Calling)│  │    Agent         │           │
+│       │                │  │                  │           │
+│       │  🔧 Tools:     │  │  Simple Chat &   │           │
+│       │  • search_brs  │  │  Identity Queries │           │
+│       │    _knowledge  │  │                  │           │
+│       └───────┬────────┘  └──────┬───────────┘           │
+│               │                   │                       │
+│               └────────┬──────────┘                       │
+│                        │                                  │
+│               ┌────────▼────────┐                        │
+│               │   Response      │                        │
+│               │   Formatter     │                        │
+│               └─────────────────┘                        │
 ├─────────────────────────────────────────────────────────────┤
 │  LangChain ChatModels    │  ChromaDB Vector Store          │
-│  (Gemini 2.0 Flash)      │  (Embeddings-based search)      │
+│  (Gemini 2.5-flash)     │  (Embeddings-based search)      │
 ├─────────────────────────────────────────────────────────────┤
 │  Knowledge Base: Acts, Regulations, FAQs, Extended Info   │
 │  • Companies Act 2015    • LLP Act 2011                    │
@@ -82,6 +82,7 @@ The system follows a **multi-agent architecture** built on FastAPI with LangGrap
 2. **Tool Binding**: RAG agent uses `.bind_tools()` - LLM autonomously decides when to search
 3. **Typed State**: `TypedDict` with reducers for safe, predictable state management
 4. **Persistent Checkpointing**: `AsyncSqliteSaver` for conversation memory across restarts
+5. **LLM-Based Intent Detection**: Router node uses LLM to classify query intent and route appropriately
 
 ## What's New: LangGraph 2026 Refactor
 
@@ -132,6 +133,14 @@ Documents are **NOT** read as raw files during search. Instead:
 
 **Why This Matters**: Semantic understanding, not just keyword matching. The system can find relevant information even if the exact words aren't used.
 
+#### 5. **Intelligent Intent Classification**
+**Before**: Rule-based routing or static routing
+**After**: LLM-based intent detection in the Router Node
+
+The router now intelligently determines if a query:
+- Needs knowledge base access ("What are LLP fees?")
+- Is a conversation ("Hello", "Who created you?", "Thanks")
+- Should be handled by the conversation agent for identity questions
 
 ## Components
 
@@ -150,6 +159,7 @@ The system uses LangGraph for orchestrating multiple AI agents with proper state
 - **Agent Orchestration**: Router, RAG agent, conversation agent, and response formatter nodes
 - **Error Handling**: Built-in error handling and retry mechanisms
 - **Checkpointing**: MemorySaver for conversation persistence
+- **Intent Detection**: LLM-powered routing for intelligent query classification
 
 ##### State Schema (`core/state.py`)
 ```python
@@ -185,7 +195,7 @@ llm = factory.get_llm("gemini")  # or "openai", "anthropic"
 **Supported Providers:**
 | Provider | Model | Package |
 |----------|-------|---------|
-| Gemini (default) | gemini-2.0-flash | google-genai |
+| Gemini (default) | gemini-2.5-flash | google-genai |
 | OpenAI | gpt-4 | openai |
 | Anthropic | claude-3 | anthropic |
 
@@ -193,12 +203,13 @@ llm = factory.get_llm("gemini")  # or "openai", "anthropic"
 
 ##### LangGraph Nodes (`agents/langgraph_nodes.py`)
 
-###### Router Node
-Determines which agent should handle the incoming query:
+###### Router Node (LLM-Based Intent Detection)
+Determines which agent should handle the incoming query using intelligent classification:
 ```python
 async def router_node(state: BRSState) -> Dict[str, str]:
-    # Analyzes user input and routes to appropriate agent
-    # Returns: {"current_agent": "rag_agent" | "conversation_agent"}
+    # Uses LLM to classify query as 'knowledge' or 'conversation'
+    # Handles identity questions specially to route to conversation agent
+    # Returns: {"current_agent": "rag_agent" | "conversation_agent", "query_type": "knowledge" | "conversation"}
 ```
 
 ###### RAG Agent Node (`agents/rag_agent.py`)
@@ -226,10 +237,11 @@ Unlike simple chatbots, BRS-SASA uses an **Agentic Graph** (LangGraph):
 - **Multi-Turn Memory**: The system maintains a persistent conversation history, allowing it to resolve ambiguous follow-ups (e.g., "And what are the fees for that?").
 
 ###### Conversation Agent Node (`agents/conversation_agent.py`)
-Handles general conversation and greetings:
+Handles general conversation and identity queries:
 ```python
 async def conversation_agent_node(state: BRSState) -> Dict[str, Any]:
-    # Processes conversational queries without RAG
+    # Processes conversational queries and identity questions
+    # Provides proper BRS-SASA identity information
     # Returns: {response, sources, confidence}
 ```
 
@@ -263,7 +275,7 @@ class TextChunker:
         # Prefixes chunks with section headers: [COMPANY REGISTRATION], [LLP], etc.
 ```
 
-**Query Expansion (`agents/rag_agent.py`):**
+**Query Expansion (`agents/rag_agent.py`):
 The RAG agent automatically expands user queries to improve retrieval accuracy:
 - Fee queries: Adds KES amounts and entity-specific terms
 - Registration queries: Adds process and requirement keywords
@@ -349,6 +361,7 @@ The application uses environment variables for configuration via Pydantic Settin
 | `HOST` | API server host | 0.0.0.0 |
 | `PORT` | API server port | 8000 |
 | `DEFAULT_LLM_PROVIDER` | LLM provider | gemini |
+| `GEMINI_MODEL` | Google Gemini model to use | gemini-2.5-flash |
 | `OPENAI_API_KEY` | OpenAI API key | - |
 | `ANTHROPIC_API_KEY` | Anthropic API key | - |
 | `VECTOR_DB_TYPE` | Vector database type | chroma |
@@ -374,7 +387,7 @@ OpenAI-compatible chat completions endpoint with optional streaming.
   "messages": [
     {"role": "user", "content": "What are the LLP registration fees?"}
   ],
-  "model": "gemini-2.0-flash",
+  "model": "gemini-2.5-flash",
   "stream": false,
   "conversation_id": "optional-uuid"
 }
@@ -386,7 +399,7 @@ OpenAI-compatible chat completions endpoint with optional streaming.
   "id": "chatcmpl-abc123",
   "object": "chat.completion",
   "created": 1706000000,
-  "model": "gemini-2.0-flash",
+  "model": "gemini-2.5-flash",
   "choices": [{
     "index": 0,
     "message": {
@@ -580,7 +593,7 @@ docker build -t brs-sasa .
 docker run -p 8000:8000 -e GEMINI_API_KEY=your_key brs-sasa
 ```
 
-## Phase 1 Implementation Status: COMPLETE (Jan 2026)
+## Phase 1 Implementation Status: COMPLETE (Feb 2026)
 
 ### Completed
 - [x] **Agentic Orchestration**: LangGraph multi-agent system with persistent state.
@@ -589,6 +602,8 @@ docker run -p 8000:8000 -e GEMINI_API_KEY=your_key brs-sasa
 - [x] **Production API**: FastAPI with SSE streaming and conversation persistence.
 - [x] **Demo UI**: Streamlit interface with native chat components.
 - [x] **Infrastructure**: SQLAlchemy database and AsyncSqliteSaver for LangGraph.
+- [x] **Intelligent Routing**: LLM-based intent detection for proper agent selection.
+- [x] **Identity Handling**: Proper BRS-SASA identity responses for AI creation questions.
 
 ### Verified Query Coverage
 | Query Type | Status | Example Response |
@@ -600,6 +615,7 @@ docker run -p 8000:8000 -e GEMINI_API_KEY=your_key brs-sasa
 | Contact Details | PASS | Full address, phone, email |
 | Processing Times | PASS | 24-48 hours |
 | Multi-turn Context | PASS | Understands "And what are the fees for that?" |
+| Identity Questions | PASS | "I am BRS-SASA, developed by a team for the Business Registration Service of Kenya" |
 
 ## Phase 2 Roadmap: Advanced Intelligence & Integration
 

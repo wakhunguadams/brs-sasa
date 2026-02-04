@@ -51,14 +51,28 @@ def start_api_server():
     print(f"LLM Provider: {settings.DEFAULT_LLM_PROVIDER}")
     print(f"Docs available at: http://{settings.HOST}:{settings.PORT}/docs")
 
-    uvicorn.run(
-        "main:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.DEBUG,
-        log_level=settings.LOG_LEVEL.lower(),
-        app_dir="."  # Specify the directory where main.py is located
-    )
+    # Don't use reload when running in a thread
+    if settings.DEBUG:
+        print("Note: Debug mode detected. For development with hot-reload, run API server separately using:")
+        print("  uvicorn main:app --host 0.0.0.0 --port 8000 --reload")
+        print("Running without reload for threading compatibility...")
+        uvicorn.run(
+            "main:app",
+            host=settings.HOST,
+            port=settings.PORT,
+            reload=False,  # Disable reload when running in thread
+            log_level=settings.LOG_LEVEL.lower(),
+            app_dir="."  # Specify the directory where main.py is located
+        )
+    else:
+        uvicorn.run(
+            "main:app",
+            host=settings.HOST,
+            port=settings.PORT,
+            reload=False,  # Always disable reload in threading context
+            log_level=settings.LOG_LEVEL.lower(),
+            app_dir="."  # Specify the directory where main.py is located
+        )
 
 def start_ui_server():
     """

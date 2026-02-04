@@ -159,6 +159,19 @@ async def stream_workflow(
             for node_name, node_state in chunk.items():
                 if "response" in node_state and node_state["response"]:
                     new_content = node_state["response"]
+                    # If new_content is a list (structured content), extract text
+                    if isinstance(new_content, list):
+                        # Handle structured content like [{'type': 'text', 'text': 'actual text'}]
+                        extracted_text = ""
+                        for item in new_content:
+                            if isinstance(item, dict) and 'text' in item:
+                                extracted_text += item.get('text', str(item))
+                            else:
+                                extracted_text += str(item)
+                        new_content = extracted_text
+                    elif not isinstance(new_content, str):
+                        new_content = str(new_content)
+                    
                     # If this is a new response or an update, stream the delta
                     if new_content != last_response:
                         delta = new_content[len(last_response):]
