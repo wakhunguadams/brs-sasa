@@ -2,7 +2,7 @@
 BRS-SASA Chat API - Production-Ready Endpoints
 Following industry best practices: OpenAI-compatible, SSE streaming, conversation management.
 """
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Header, Query, Depends
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Header, Query, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Dict, Optional, AsyncGenerator, List
@@ -12,6 +12,8 @@ import uuid
 import time
 import asyncio
 from datetime import datetime
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from schemas.chat import (
     ChatCompletionRequest,
@@ -39,6 +41,87 @@ from core.logger import setup_logger
 
 router = APIRouter()
 logger = setup_logger(__name__)
+
+# Rate limiter setup
+limiter = Limiter(key_func=get_remote_address)
+
+
+# ============================================
+# Input Validation Functions
+# ============================================
+
+def validate_chat_request(request: ChatCompletionRequest) -> None:
+    """Validate chat completion request inputs"""
+    # Check messages not empty
+    if not request.messages:
+        raise HTTPException(
+            status_code=400,
+            detail=APIError(
+                error=ErrorDetail(
+                    code="invalid_request",
+                    message="Messages list cannot be empty",
+                    type="invalid_request_error",
+                    param="messages"
+                )
+            ).model_dump()
+        )
+    
+    # Check message content length
+    for idx, msg in enumerate(request.messages):
+        if not msg.content or not msg.content.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=APIError(
+                    error=ErrorDetail(
+                        code="invalid_request",
+                        message=f"Message at index {idx} has empty content",
+                        type="invalid_request_error",
+                        param=f"messages[{idx}].content"
+                    )
+                ).model_dump()
+            )
+        
+        # Limit message length (10k chars per message)
+        if len(msg.content) > 10000:
+            raise HTTPException(
+                status_code=400,
+                detail=APIError(
+                    error=ErrorDetail(
+                        code="invalid_request",
+                        message=f"Message at index {idx} exceeds 10,000 character limit",
+                        type="invalid_request_error",
+                        param=f"messages[{idx}].content"
+                    )
+                ).model_dump()
+            )
+    
+    # Limit total messages in request
+    if len(request.messages) > 50:
+        raise HTTPException(
+            status_code=400,
+            detail=APIError(
+                error=ErrorDetail(
+                    code="invalid_request",
+                    message="Too many messages in request (max 50)",
+                    type="invalid_request_error",
+                    param="messages"
+                )
+            ).model_dump()
+        )
+    
+    # Validate temperature
+    if request.temperature is not None and (request.temperature < 0 or request.temperature > 2):
+        raise HTTPException(
+            status_code=400,
+            detail=APIError(
+                error=ErrorDetail(
+                    code="invalid_request",
+                    message="Temperature must be between 0 and 2",
+                    type="invalid_request_error",
+                    param="temperature"
+                )
+            ).model_dump()
+        )
 
 
 # ============================================
@@ -261,25 +344,27 @@ def store_messages_in_conversation(
 # ============================================
 
 @router.post("/conversations", response_model=Conversation, tags=["Conversations"])
-async def create_conversation(request: ConversationCreate, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")  # Rate limit: 30 requests per minute per IP
+async def create_conversation(request: Request, conv_request: ConversationCreate, db: Session = Depends(get_db)):
     """
     Create a new conversation/thread.
+    Rate limit: 30 requests per minute per IP address.
     """
     conv_id = str(uuid.uuid4())
     db_conv = ConversationModel(
         id=conv_id,
-        title=request.title,
-        conversation_metadata=request.conversation_metadata or {}
+        title=conv_request.title,
+        conversation_metadata=conv_request.conversation_metadata or {}
     )
     db.add(db_conv)
     
     # Add system message if provided
-    if request.system_message:
+    if conv_request.system_message:
         system_msg = MessageModel(
             id=str(uuid.uuid4()),
             conversation_id=conv_id,
             role="system",
-            content=request.system_message
+            content=conv_request.system_message
         )
         db.add(system_msg)
     
@@ -376,21 +461,27 @@ async def delete_conversation(conversation_id: str, db: Session = Depends(get_db
 # ============================================
 
 @router.post("/completions", response_model=ChatCompletionResponse, tags=["Chat"])
+@limiter.limit("20/minute")  # Rate limit: 20 requests per minute per IP
 async def create_chat_completion(
-    request: ChatCompletionRequest,
+    request: Request,
+    chat_request: ChatCompletionRequest,
     db: Session = Depends(get_db),
     x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
     """
-    Create a chat completion.
+    Create a chat completion with rate limiting and input validation.
+    Rate limit: 20 requests per minute per IP address.
     """
     request_id = x_request_id or generate_request_id()
     start_time = time.time()
     
+    # Validate input
+    validate_chat_request(chat_request)
+    
     try:
         # Get or create conversation
-        conv_id = request.conversation_id or str(uuid.uuid4())
+        conv_id = chat_request.conversation_id or str(uuid.uuid4())
         db_conv = db.query(ConversationModel).filter(ConversationModel.id == conv_id).first()
         if not db_conv:
             db_conv = ConversationModel(id=conv_id)
@@ -398,13 +489,13 @@ async def create_chat_completion(
             db.commit()
         
         # Handle streaming
-        if request.stream:
+        if chat_request.stream:
             return StreamingResponse(
                 stream_workflow(
-                    request.messages,
+                    chat_request.messages,
                     conv_id,
-                    request.provider or "gemini",
-                    request.model or "gemini-2.0-flash"
+                    chat_request.provider or "gemini",
+                    chat_request.model or "gemini-2.0-flash"
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -418,9 +509,9 @@ async def create_chat_completion(
         
         # Non-streaming: invoke workflow
         result = await invoke_workflow(
-            request.messages,
+            chat_request.messages,
             conv_id,
-            request.provider or "gemini"
+            chat_request.provider or "gemini"
         )
         
         latency_ms = int((time.time() - start_time) * 1000)
@@ -432,12 +523,12 @@ async def create_chat_completion(
         store_messages_in_conversation(
             db,
             conv_id,
-            request.messages[-1].content,
+            chat_request.messages[-1].content,
             response_text,
             MessageMetadata(
                 sources=sources,
                 confidence=confidence,
-                model=request.model,
+                model=chat_request.model,
                 latency_ms=latency_ms
             )
         )
@@ -445,7 +536,7 @@ async def create_chat_completion(
         # Build response
         return ChatCompletionResponse(
             id=generate_completion_id(),
-            model=request.model or "gemini-2.0-flash",
+            model=chat_request.model or "gemini-2.0-flash",
             choices=[
                 ChatCompletionChoice(
                     index=0,

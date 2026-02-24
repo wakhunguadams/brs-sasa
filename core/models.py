@@ -28,3 +28,14 @@ class MessageModel(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversation = relationship("ConversationModel", back_populates="messages")
+
+class FeedbackModel(Base):
+    __tablename__ = "feedback"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_query = Column(Text, nullable=False)
+    legislation_section = Column(String, nullable=True)
+    feedback_text = Column(Text, nullable=False)
+    sentiment = Column(String, nullable=True)  # positive, negative, neutral, suggestion
+    feedback_metadata = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

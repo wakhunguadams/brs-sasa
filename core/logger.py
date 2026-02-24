@@ -1,10 +1,11 @@
 import logging
 import sys
+from pythonjsonlogger import jsonlogger
 from core.config import settings
 
 def setup_logger(name: str = "brs_sasa", level: str = None) -> logging.Logger:
     """
-    Set up a logger with the specified name and level
+    Set up a logger with structured JSON logging for production
     """
     if level is None:
         level = settings.LOG_LEVEL
@@ -20,8 +21,17 @@ def setup_logger(name: str = "brs_sasa", level: str = None) -> logging.Logger:
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(getattr(logging, level.upper()))
     
-    # Create formatter
-    formatter = logging.Formatter(settings.LOG_FORMAT)
+    # Use JSON formatter for structured logging in production
+    if settings.DEBUG:
+        # Human-readable format for development
+        formatter = logging.Formatter(settings.LOG_FORMAT)
+    else:
+        # JSON format for production (better for log aggregation)
+        formatter = jsonlogger.JsonFormatter(
+            '%(timestamp)s %(level)s %(name)s %(message)s',
+            rename_fields={'timestamp': '@timestamp', 'level': 'severity'}
+        )
+    
     console_handler.setFormatter(formatter)
     
     # Add handler to logger

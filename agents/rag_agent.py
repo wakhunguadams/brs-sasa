@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -31,6 +32,44 @@ class RAGAgent:
         self.logger = logger
         logger.info("RAG Agent initialized with tool-calling capability")
     
+    def _extract_content(self, content) -> str:
+        """Extract text content from response (handles both string and list)"""
+        if isinstance(content, str):
+            return content
+        elif isinstance(content, list):
+            # Handle structured content like [{'type': 'text', 'text': 'actual text'}]
+            extracted_text = ""
+            for item in content:
+                if isinstance(item, dict) and 'text' in item:
+                    extracted_text += item.get('text', '')
+                elif isinstance(item, str):
+                    extracted_text += item
+                else:
+                    extracted_text += str(item)
+            return extracted_text
+        else:
+            return str(content)
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
+    async def _invoke_llm_with_retry(self, messages: List):
+        """Invoke LLM with retry logic and exponential backoff"""
+        return await self.llm_with_tools.ainvoke(messages)
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
+    async def _invoke_llm_final_with_retry(self, messages: List):
+        """Invoke final LLM call with retry logic"""
+        return await self.llm.ainvoke(messages)
+    
     async def query_knowledge_base(
         self,
         query: str,
@@ -52,8 +91,8 @@ class RAGAgent:
                 HumanMessage(content=rephrased_query)
             ]
             
-            # Invoke LLM with tools - it will decide if it needs to search
-            response = await self.llm_with_tools.ainvoke(messages)
+            # Invoke LLM with tools - it will decide if it needs to search (with retry)
+            response = await self._invoke_llm_with_retry(messages)
             
             # Check if LLM called any tools
             if response.tool_calls:
@@ -73,15 +112,15 @@ class RAGAgent:
                 # Add tool results to messages
                 messages.extend(tool_results["messages"])
                 
-                # Get final response from LLM after seeing tool results
-                final_response = await self.llm.ainvoke(messages)
-                response_text = final_response.content
+                # Get final response from LLM after seeing tool results (with retry)
+                final_response = await self._invoke_llm_final_with_retry(messages)
+                response_text = self._extract_content(final_response.content)
                 
                 # Extract sources from tool results
                 sources = self._extract_sources_from_tool_results(tool_results)
             else:
                 # LLM responded directly without using tools
-                response_text = response.content
+                response_text = self._extract_content(response.content)
                 sources = []
                 self.logger.info("LLM responded without using tools")
 
@@ -95,7 +134,7 @@ class RAGAgent:
         except Exception as e:
             self.logger.error(f"Error in RAG agent: {str(e)}")
             return RAGResponse(
-                response_text="I'm sorry, I encountered an error while searching the knowledge base. Please try again.",
+                response_text="I encountered an error while searching the knowledge base. Please try again or rephrase your question.",
                 sources=[],
                 confidence=0.0,
                 retrieved_chunks=[]
@@ -134,10 +173,14 @@ class RAGAgent:
             "- Fees and costs\n"
             "- Legal acts and regulations\n"
             "- BRS contact information and services\n\n"
-            "If asked about your creation, identity, or who created you, respond that you are BRS-SASA, "
-            "developed by a team for the Business Registration Service of Kenya, not a generic model.\n\n"
-            "Always cite your sources when providing information from the knowledge base. "
-            "If you don't have enough information to answer accurately, say so and suggest contacting BRS directly."
+            "RESPONSE GUIDELINES:\n"
+            "- Be confident and direct in your responses\n"
+            "- When you find information in the knowledge base, present it clearly with sources\n"
+            "- If the knowledge base doesn't have specific information, say what you found and suggest alternatives\n"
+            "- Focus on providing helpful guidance rather than apologizing\n"
+            "- Always cite your sources when providing information from the knowledge base\n\n"
+            "If asked about your creation, respond that you are BRS-SASA, "
+            "developed by a team for the Business Registration Service of Kenya."
         )
     
     def _extract_sources_from_tool_results(self, tool_results: Dict[str, Any]) -> List[str]:

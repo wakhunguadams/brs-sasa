@@ -1,12 +1,12 @@
 from typing import Dict, Any
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-import aiosqlite
+from langgraph.checkpoint.memory import MemorySaver
 
 from core.state import BRSState, route_query_type, route_after_processing, route_after_validation
 from agents.langgraph_nodes import (
     rag_agent_node,
     conversation_agent_node,
+    public_participation_agent_node,
     router_node,
     response_formatter_node,
     error_handler_node
@@ -21,11 +21,9 @@ class BRSWorkflow:
     Following LangGraph best practices for state management and graph flow
     """
 
-    def __init__(self, db_path: str = "brs_sasa_checkpoints.db"):
+    def __init__(self):
         self.workflow = None
-        self.db_path = db_path
         self.memory = None
-        self._saver_cm = None
 
     async def initialize(self):
         """
@@ -41,6 +39,7 @@ class BRSWorkflow:
         workflow.add_node("router", router_node)
         workflow.add_node("rag_agent", rag_agent_node)
         workflow.add_node("conversation_agent", conversation_agent_node)
+        workflow.add_node("public_participation_agent", public_participation_agent_node)
         workflow.add_node("response_formatter", response_formatter_node)
         workflow.add_node("error_handler", error_handler_node)
 
@@ -48,26 +47,33 @@ class BRSWorkflow:
         workflow.set_entry_point("router")
 
         # Add conditional edges
-        workflow.add_conditional_edges("router", route_query_type, {"rag_agent": "rag_agent", "conversation_agent": "conversation_agent"})
+        workflow.add_conditional_edges(
+            "router", 
+            route_query_type, 
+            {
+                "rag_agent": "rag_agent", 
+                "conversation_agent": "conversation_agent",
+                "public_participation_agent": "public_participation_agent",
+                "error": "response_formatter",  # Go directly to formatter for errors
+                "out_of_scope": "response_formatter"  # Go directly to formatter for out-of-scope
+            }
+        )
         workflow.add_conditional_edges("rag_agent", route_after_processing, {"response_formatter": "response_formatter", "error_handler": "error_handler"})
         workflow.add_conditional_edges("conversation_agent", route_after_processing, {"response_formatter": "response_formatter", "error_handler": "error_handler"})
+        workflow.add_conditional_edges("public_participation_agent", route_after_processing, {"response_formatter": "response_formatter", "error_handler": "error_handler"})
         workflow.add_conditional_edges("error_handler", route_after_validation, {"response_formatter": "response_formatter", "error_handler": "error_handler"})
         workflow.add_edge("response_formatter", END)
 
-        # Initialize AsyncSqliteSaver
-        self._saver_cm = AsyncSqliteSaver.from_conn_string(self.db_path)
-        self.memory = await self._saver_cm.__aenter__()
+        # Initialize MemorySaver for conversation history
+        self.memory = MemorySaver()
         self.workflow = workflow.compile(checkpointer=self.memory)
         
-        logger.info("BRSWorkflow initialized with AsyncSqliteSaver")
+        logger.info("BRSWorkflow initialized with MemorySaver")
 
     async def close(self):
         """Close the persistent storage"""
-        if self._saver_cm:
-            await self._saver_cm.__aexit__(None, None, None)
-            self._saver_cm = None
-            self.memory = None
-            self.workflow = None
+        self.memory = None
+        self.workflow = None
 
     async def invoke(self, inputs: Dict[str, Any], config: Dict[str, Any] = None) -> Dict[str, Any]:
         """

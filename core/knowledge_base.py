@@ -59,13 +59,14 @@ class KnowledgeBase:
             logger.error(f"Failed to initialize knowledge base: {str(e)}")
             raise
     
-    async def search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    async def search(self, query: str, top_k: int = 5, where: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Search the knowledge base
         
         Args:
             query: Search query
             top_k: Number of results to return
+            where: Optional metadata filter (e.g., {"type": "legislation"})
         
         Returns:
             List of chunk dictionaries with content, source, and distance
@@ -74,11 +75,16 @@ class KnowledgeBase:
             await self.initialize()
         
         try:
-            results = self.collection.query(
-                query_texts=[query],
-                n_results=top_k,
-                include=["documents", "metadatas", "distances"]
-            )
+            query_params = {
+                "query_texts": [query],
+                "n_results": top_k,
+                "include": ["documents", "metadatas", "distances"]
+            }
+            
+            if where:
+                query_params["where"] = where
+            
+            results = self.collection.query(**query_params)
             
             chunks = []
             

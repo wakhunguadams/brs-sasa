@@ -68,6 +68,12 @@ def route_query_type(state: BRSState) -> str:
     """
     # Use the agent determined by the LLM-based router node
     current_agent = state.get("current_agent", "conversation_agent")
+    query_type = state.get("query_type", "")
+    
+    # Handle error and out-of-scope cases
+    if query_type in ["error", "out_of_scope"]:
+        return query_type
+    
     return current_agent
 
 def route_after_processing(state: BRSState) -> str:

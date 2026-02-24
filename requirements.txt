@@ -27,5 +27,19 @@ pytest
 pytest-asyncio
 httpx
 websockets
-streamlitPyPDF2
+streamlit
+PyPDF2
 aiosqlite
+# Production improvements
+slowapi
+tenacity
+python-json-logger
+prometheus-client
+# Web search
+ddgs
+# Web scraping
+httpx
+beautifulsoup4
+lxml
+# Document processing
+python-docx
