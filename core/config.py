@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     MAX_TOKENS: int = Field(default=1000, description="Maximum tokens for LLM responses")
     TEMPERATURE: float = Field(default=0.7, description="Temperature for LLM responses")
 
+    # BRS Business Lookup API
+    BRS_API_BASE_URL: str = Field(default="https://brs.pesaflow.com", description="BRS Business Lookup API base URL")
+    BRS_API_USERNAME: Optional[str] = Field(default=None, description="BRS API Basic Auth username")
+    BRS_API_PASSWORD: Optional[str] = Field(default=None, description="BRS API Basic Auth password")
+
     class Config:
         env_file = ".env"
         env_file_encoding = 'utf-8'

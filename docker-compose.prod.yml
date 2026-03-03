@@ -1,0 +1,117 @@
+services:
+  # API Service - Production Configuration
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brs-sasa-api-prod
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./data/brs_sasa.db
+      - CHROMA_PERSIST_DIR=./chroma_data
+      - LOG_LEVEL=WARNING
+      - DEBUG=false
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    volumes:
+      - data:/app/data
+      - logs:/app/logs
+      - chroma_data:/app/chroma_data
+      - uploads:/app/uploads
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    networks:
+      - brs-network
+
+  # User Interface Service - Production Configuration
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brs-sasa-ui-prod
+    ports:
+      - "8501:8501"
+    environment:
+      - API_BASE_URL=http://api:8000/api/v1/chat
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    volumes:
+      - uploads:/app/uploads
+    command: streamlit run ui_demo.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --server.maxUploadSize 10
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    networks:
+      - brs-network
+
+  # CRM Dashboard Service - Production Configuration
+  crm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brs-sasa-crm-prod
+    ports:
+      - "8502:8502"
+    environment:
+      - DATABASE_URL=sqlite:///./data/brs_sasa.db
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    volumes:
+      - data:/app/data
+      - logs:/app/logs
+    command: streamlit run crm_dashboard.py --server.address 0.0.0.0 --server.port 8502 --server.headless true
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    networks:
+      - brs-network
+
+networks:
+  brs-network:
+    driver: bridge
+
+volumes:
+  data:
+    driver: local
+  logs:
+    driver: local
+  chroma_data:
+    driver: local
+  uploads:
+    driver: local

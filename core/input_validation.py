@@ -133,25 +133,53 @@ class InputValidator:
     @staticmethod
     def is_out_of_scope(user_input: str) -> Tuple[bool, Optional[str]]:
         """
-        Check if query is out of scope for BRS-SASA
+        Check if query is out of scope or adversarial for BRS-SASA
         
         Returns:
             (is_out_of_scope, response_message)
         """
+        user_input_lower = user_input.lower()
+        
+        # 1. Jailbreak / Prompt Injection detection
+        jailbreak_patterns = [
+            r'ignore (all )?previous instructions',
+            r'disregard (all )?previous instructions',
+            r'system prompt',
+            r'repeat back your instructions',
+            r'you are now a',
+            r'act as if you are'
+        ]
+        
+        for pattern in jailbreak_patterns:
+            if re.search(pattern, user_input_lower):
+                return (True, "I cannot disclose my system prompt or instructions. I am BRS-SASA, your AI assistant for the Business Registration Service of Kenya. How can I help you with BRS topics?")
+
+        # 2. Harmful / Illegal / Offensive detection
+        harmful_patterns = {
+            r'fake id|fraudulent document|forge': "I cannot assist with queries involving fraudulent documents or illegal activities. BRS registration requires verifiable and legal identification.",
+            r'tax evasion|avoid tax|hide money': "I cannot provide guidance on tax evasion or illegal financial activities. All registered businesses must comply with KRA and BRS regulations.",
+            r'useless|idiot|trash|stupid|fuck|shit': "I understand you may be frustrated, but I maintain a professional environment. Please let me know how I can help you with BRS-related queries or contact BRS customer service directly if you have a complaint."
+        }
+        
+        for pattern, response in harmful_patterns.items():
+            if re.search(pattern, user_input_lower):
+                return (True, response)
+
+        # 3. Out of scope keywords
         out_of_scope_keywords = [
             'weather', 'temperature', 'climate',
-            'sports', 'football', 'soccer', 'basketball',
+            'sports', 'football', 'soccer', 'basketball', 'arsenal', 'chelsea', 'manchester',
             'recipe', 'cooking', 'food',
             'movie', 'film', 'entertainment',
             'music', 'song', 'artist',
             'joke', 'funny', 'laugh',
-            'game', 'play', 'gaming'
+            'game', 'play', 'gaming',
+            'dating', 'love', 'marriage advice',
+            'politics', 'election', 'voting'
         ]
         
-        user_input_lower = user_input.lower()
-        
         for keyword in out_of_scope_keywords:
-            if keyword in user_input_lower:
+            if re.search(rf'\b{keyword}\b', user_input_lower):
                 return (True, (
                     f"I can only provide information related to the Business Registration Service (BRS) of Kenya. "
                     f"I cannot help with {keyword}-related queries.\n\n"

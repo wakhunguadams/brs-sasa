@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation (keep essential ones)
+*.md
+!README.md
+!DOCKER_GUIDE.md
+
+# Logs and data (will be mounted as volumes)
+logs/
+*.log
+data/
+chroma_data/
+uploads/
+*.db
+*.db-journal
+
+# Test files
+test_*.py
+*_test.py
+tests/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Environment
+.env.example
+.env.local
+.env.*.local
+
+# Temporary files
+tmp/
+temp/
+*.tmp

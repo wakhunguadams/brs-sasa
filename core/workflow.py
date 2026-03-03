@@ -7,6 +7,7 @@ from agents.langgraph_nodes import (
     rag_agent_node,
     conversation_agent_node,
     public_participation_agent_node,
+    application_assistant_agent_node,
     router_node,
     response_formatter_node,
     error_handler_node
@@ -40,6 +41,7 @@ class BRSWorkflow:
         workflow.add_node("rag_agent", rag_agent_node)
         workflow.add_node("conversation_agent", conversation_agent_node)
         workflow.add_node("public_participation_agent", public_participation_agent_node)
+        workflow.add_node("application_assistant_agent", application_assistant_agent_node)
         workflow.add_node("response_formatter", response_formatter_node)
         workflow.add_node("error_handler", error_handler_node)
 
@@ -54,6 +56,7 @@ class BRSWorkflow:
                 "rag_agent": "rag_agent", 
                 "conversation_agent": "conversation_agent",
                 "public_participation_agent": "public_participation_agent",
+                "application_assistant_agent": "application_assistant_agent",
                 "error": "response_formatter",  # Go directly to formatter for errors
                 "out_of_scope": "response_formatter"  # Go directly to formatter for out-of-scope
             }
@@ -61,6 +64,7 @@ class BRSWorkflow:
         workflow.add_conditional_edges("rag_agent", route_after_processing, {"response_formatter": "response_formatter", "error_handler": "error_handler"})
         workflow.add_conditional_edges("conversation_agent", route_after_processing, {"response_formatter": "response_formatter", "error_handler": "error_handler"})
         workflow.add_conditional_edges("public_participation_agent", route_after_processing, {"response_formatter": "response_formatter", "error_handler": "error_handler"})
+        workflow.add_conditional_edges("application_assistant_agent", route_after_processing, {"response_formatter": "response_formatter", "error_handler": "error_handler"})
         workflow.add_conditional_edges("error_handler", route_after_validation, {"response_formatter": "response_formatter", "error_handler": "error_handler"})
         workflow.add_edge("response_formatter", END)
 

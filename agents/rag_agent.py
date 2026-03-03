@@ -150,7 +150,7 @@ class RAGAgent:
         history_str = "\n".join([f"{m['role'].title()}: {m['content']}" for m in history[-3:]])
         
         messages = [
-            SystemMessage(content="You are a query rephraser. Rephrase the follow-up question to be standalone."),
+            SystemMessage(content="You are a query rephraser for the Business Registration Service of Kenya. Rephrase the follow-up question to be standalone and comprehensive. Respond ONLY with the rephrased query, no extra text or explanations."),
             HumanMessage(content=f"History:\n{history_str}\n\nFollow-up Question: {query}")
         ]
         

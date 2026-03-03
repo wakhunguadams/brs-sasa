@@ -80,10 +80,15 @@ class PublicParticipationAgent:
             # Check if this is feedback/opinion - if so, force feedback collection
             opinion_keywords = ['support', 'concerned', 'concern', 'suggest', 'think', 'believe', 
                               'opinion', 'should', 'must', 'need to', 'recommend', 'propose',
-                              'agree', 'disagree', 'oppose', 'favor', 'against', 'for']
+                              'agree', 'disagree', 'oppose', 'favor', 'against', 'for', 'reduce',
+                              'increase', 'change', 'improve', 'better', 'worse']
+            
+            # Also check for explicit feedback requests
+            feedback_requests = ['record', 'save', 'submit', 'log', 'store', 'collect', 'feedback']
             
             user_input_lower = user_input.lower()
             is_opinion = any(keyword in user_input_lower for keyword in opinion_keywords)
+            is_feedback_request = any(keyword in user_input_lower for keyword in feedback_requests)
             
             messages = [SystemMessage(content=self._get_system_prompt())]
             
@@ -99,11 +104,66 @@ class PublicParticipationAgent:
             # Add current user input
             messages.append(HumanMessage(content=user_input))
             
+            # Check if this is a direct legislation question that requires tool use
+            legislation_keywords = ['trust administration bill', 'trust act', 'trust bill', 
+                                   'legislation', 'bill 2025', 'proposed law', 'draft law']
+            is_legislation_query = any(keyword in user_input_lower for keyword in legislation_keywords)
+            
             # Invoke LLM with tools
             response = await self._invoke_llm_with_retry(messages)
             
+            # If LLM didn't call tools but this is clearly a legislation query, force tool use
+            if not response.tool_calls and is_legislation_query and not is_opinion:
+                self.logger.info("Legislation query detected but LLM didn't call tool - forcing search")
+                
+                # Manually call legislation search tool
+                from tools.feedback_tool import search_legislation_knowledge
+                
+                try:
+                    search_result = await search_legislation_knowledge.ainvoke({"query": user_input})
+                    
+                    # Add search result to context and ask LLM to generate response
+                    messages.append(response)
+                    from langchain_core.messages import ToolMessage
+                    messages.append(ToolMessage(
+                        content=search_result,
+                        tool_call_id="forced_search",
+                        name="search_legislation_knowledge"
+                    ))
+                    
+                    # Get final response with search results
+                    final_response = await self._invoke_llm_final_with_retry(messages)
+                    response_text = self._extract_content(final_response.content)
+                    
+                    # Check if response is still empty
+                    if not response_text or len(response_text.strip()) < 50:
+                        response_text = (
+                            "Based on the Trust Administration Bill 2025, I found relevant information. "
+                            "However, I'm having trouble generating a complete response. "
+                            "Could you ask about a specific aspect? For example:\n"
+                            "- Registration requirements\n"
+                            "- Trustee duties\n"
+                            "- Penalties for non-compliance\n"
+                            "- Comparison with other countries"
+                        )
+                    
+                    sources = ["Trust Administration Bill 2025"]
+                    feedback_collected = False
+                    
+                except Exception as e:
+                    self.logger.error(f"Error in forced legislation search: {str(e)}")
+                    response_text = self._extract_content(response.content)
+                    if not response_text or len(response_text.strip()) < 50:
+                        response_text = (
+                            "I'm having trouble accessing the legislation documents right now. "
+                            "Please try rephrasing your question or contact BRS directly for information "
+                            "about the Trust Administration Bill 2025."
+                        )
+                    sources = []
+                    feedback_collected = False
+            
             # Check if LLM called any tools
-            if response.tool_calls:
+            elif response.tool_calls:
                 self.logger.info(f"Public participation agent called {len(response.tool_calls)} tool(s)")
                 
                 # Execute the tool calls
@@ -143,26 +203,39 @@ class PublicParticipationAgent:
                 
                 sources = self._extract_sources_from_tool_results(tool_results)
             
-            # If this is an opinion but LLM didn't call feedback tool, force it
-            elif is_opinion:
-                self.logger.info("Opinion detected but LLM didn't call feedback tool - forcing collection")
+            # If this is an opinion or feedback request but LLM didn't call feedback tool, force it
+            elif is_opinion or is_feedback_request:
+                self.logger.info("Opinion/feedback request detected but LLM didn't call feedback tool - forcing collection")
+                
+                # If user says "record the feedback", look for their previous opinion in history
+                feedback_text = user_input
+                if is_feedback_request and not is_opinion and history:
+                    # Look for the last user message that contained an opinion
+                    for msg in reversed(history):
+                        if msg.get("role") == "user":
+                            msg_content = msg.get("content", "").lower()
+                            if any(kw in msg_content for kw in opinion_keywords):
+                                feedback_text = msg.get("content", user_input)
+                                self.logger.info(f"Found previous opinion in history: {feedback_text[:50]}...")
+                                break
                 
                 # Manually call feedback tool
                 from tools.feedback_tool import collect_legislation_feedback
                 
                 # Determine sentiment
                 sentiment = "neutral"
-                if any(word in user_input_lower for word in ['support', 'agree', 'favor', 'good', 'excellent']):
+                feedback_lower = feedback_text.lower()
+                if any(word in feedback_lower for word in ['support', 'agree', 'favor', 'good', 'excellent']):
                     sentiment = "positive"
-                elif any(word in user_input_lower for word in ['concerned', 'concern', 'oppose', 'against', 'bad', 'poor']):
+                elif any(word in feedback_lower for word in ['concerned', 'concern', 'oppose', 'against', 'bad', 'poor']):
                     sentiment = "negative"
-                elif any(word in user_input_lower for word in ['suggest', 'recommend', 'propose', 'should', 'could']):
+                elif any(word in feedback_lower for word in ['suggest', 'recommend', 'propose', 'should', 'could', 'reduce', 'increase', 'change']):
                     sentiment = "suggestion"
                 
                 # Call feedback tool
                 feedback_result = collect_legislation_feedback.invoke({
-                    "user_query": user_input,
-                    "feedback_text": user_input,
+                    "user_query": feedback_text,
+                    "feedback_text": feedback_text,
                     "legislation_section": None,
                     "sentiment": sentiment
                 })
@@ -222,14 +295,23 @@ class PublicParticipationAgent:
             "3. ANSWER QUESTIONS: Help users understand specific sections, requirements, and implications\n"
             "4. COLLECT FEEDBACK: When users express opinions, concerns, or suggestions, use the feedback tool to record them\n\n"
             
-            "TOOL SELECTION GUIDELINES:\n"
-            "- For questions about the Trust Administration Bill → use search_legislation_knowledge\n"
+            "TOOL SELECTION GUIDELINES - CRITICAL:\n"
+            "- For ANY question about the Trust Administration Bill → ALWAYS use search_legislation_knowledge FIRST\n"
             "- For comparing with other countries' laws → use search_web_duckduckgo with specific country names\n"
             "- For recent updates and news → use search_brs_news\n"
             "- When user expresses feedback, opinion, or suggestion → use collect_legislation_feedback\n\n"
             
+            "MANDATORY TOOL USE:\n"
+            "- If user asks 'Explain the Trust Bill' → YOU MUST call search_legislation_knowledge\n"
+            "- If user asks 'What does the bill say about X' → YOU MUST call search_legislation_knowledge\n"
+            "- If user asks 'Compare with Uganda' → YOU MUST call search_web_duckduckgo\n"
+            "- If user says 'I think/support/oppose' → YOU MUST call collect_legislation_feedback\n"
+            "- NEVER respond about legislation without calling search_legislation_knowledge first\n\n"
+            
             "FEEDBACK COLLECTION - CRITICAL:\n"
             "- When user says 'I support', 'I'm concerned', 'I suggest', 'I think', 'I believe' → ALWAYS call collect_legislation_feedback\n"
+            "- When user says 'record feedback', 'save feedback', 'submit feedback', 'log feedback' → ALWAYS call collect_legislation_feedback\n"
+            "- When user says 'record the feedback' → Look at conversation history to find their previous opinion/suggestion and record it\n"
             "- The tool will automatically thank the user and provide a feedback ID\n"
             "- After calling the feedback tool, acknowledge that their input was recorded\n"
             "- DO NOT provide your own feedback confirmation - let the tool handle it\n"
@@ -260,7 +342,8 @@ class PublicParticipationAgent:
             "- Sentiments: 'positive' (support), 'negative' (concern/opposition), 'neutral' (question/clarification), 'suggestion' (improvement idea)\n\n"
             
             "Remember: You're facilitating democratic participation. Be helpful, direct, and accessible. "
-            "Make legislation easy to understand without being condescending."
+            "Make legislation easy to understand without being condescending. "
+            "ALWAYS use tools when appropriate - don't try to answer from memory alone."
         )
     
     def _extract_sources_from_tool_results(self, tool_results: Dict[str, Any]) -> List[str]:

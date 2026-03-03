@@ -27,6 +27,8 @@ if "conversation_id" not in st.session_state:
     st.session_state.conversation_id = None
 if "streaming_enabled" not in st.session_state:
     st.session_state.streaming_enabled = True
+if "uploaded_image" not in st.session_state:
+    st.session_state.uploaded_image = None
 
 
 # ============================================
@@ -270,8 +272,119 @@ def render_chat_history():
         )
 
 
-def process_user_input(user_input: str):
+def process_user_input(user_input: str, uploaded_file=None):
     """Process user input and get AI response."""
+    if not user_input.strip() and not uploaded_file:
+        return
+    
+    # Handle screenshot upload
+    if uploaded_file:
+        import base64
+        from PIL import Image
+        import io
+        
+        # Save uploaded file temporarily
+        image = Image.open(uploaded_file)
+        
+        # Display uploaded image
+        with st.chat_message("user", avatar="👤"):
+            st.image(image, caption="Uploaded Screenshot", use_container_width=True)
+            if user_input.strip():
+                st.markdown(user_input)
+            else:
+                st.markdown("*[Screenshot uploaded - analyzing issue]*")
+        
+        # Convert image to base64 for API
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        img_base64 = base64.b64encode(buffered.getvalue()).decode()
+        
+        # Add to message history
+        st.session_state.messages.append({
+            "role": "user",
+            "content": user_input if user_input.strip() else "I'm having an issue (see screenshot)",
+            "image": img_base64
+        })
+        
+        # Analyze screenshot using Gemini Vision via Application Assistant Agent
+        with st.chat_message("assistant", avatar="🤖"):
+            with st.spinner("🔍 Analyzing screenshot with AI..."):
+                try:
+                    # Save image temporarily
+                    import tempfile
+                    import os
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png', dir='./') as tmp_file:
+                        image.save(tmp_file.name, format='PNG')
+                        temp_path = tmp_file.name
+                    
+                    # Send to API with screenshot path in the message
+                    description = user_input if user_input.strip() else "I'm having an issue (see screenshot)"
+                    
+                    # Build message with screenshot indicator
+                    api_messages = [
+                        {"role": "user", "content": f"{description}\n\n[Screenshot uploaded: {temp_path}]"}
+                    ]
+                    
+                    # Get AI response (Application Assistant will use screenshot analysis tool)
+                    with st.spinner("Analyzing..."):
+                        response = send_message(
+                            api_messages,
+                            st.session_state.conversation_id
+                        )
+                    
+                    # Clean up temp file
+                    try:
+                        os.unlink(temp_path)
+                    except:
+                        pass
+                    
+                    if "error" in response:
+                        st.error(f"Error: {response['error']}")
+                        return
+                    
+                    # Extract response data
+                    full_response = response["choices"][0]["message"]["content"]
+                    sources = response.get("sources", [])
+                    confidence = response.get("confidence", 0.0)
+                    st.session_state.conversation_id = response.get("conversation_id")
+                    
+                    st.markdown(full_response)
+                    
+                    # Display metadata
+                    cols = st.columns([3, 1])
+                    with cols[0]:
+                        if sources:
+                            sources_display = ", ".join(sources[:3])
+                            if len(sources) > 3:
+                                sources_display += f" +{len(sources) - 3} more"
+                            st.caption(f"📚 Sources: {sources_display}")
+                    with cols[1]:
+                        if confidence > 0:
+                            st.caption(f"✅ {confidence * 100:.0f}% confident")
+                    
+                    analysis_response = full_response
+                    
+                except Exception as e:
+                    analysis_response = f"""I encountered an error analyzing the screenshot: {str(e)}
+
+Please describe your issue in text, or contact BRS directly:
+📞 Phone: +254 11 112 7000
+📧 Email: eo@brs.go.ke
+🌐 Website: https://brs.go.ke/"""
+                    st.markdown(analysis_response)
+        
+        # Add assistant response to history
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": analysis_response,
+            "sources": ["Screenshot Analysis"],
+            "confidence": 0.8
+        })
+        
+        return
+    
+    # Regular text message processing
     if not user_input.strip():
         return
     
@@ -289,6 +402,7 @@ def process_user_input(user_input: str):
     api_messages = [
         {"role": msg["role"], "content": msg["content"]}
         for msg in st.session_state.messages
+        if "image" not in msg  # Skip image messages for now
     ]
     
     # Get AI response
@@ -380,9 +494,24 @@ def main():
         process_user_input(quick_query)
         st.rerun()
     
-    # Chat input
-    if user_input := st.chat_input("Ask about business registration in Kenya..."):
-        process_user_input(user_input)
+    # Screenshot upload section
+    st.markdown("---")
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        user_input = st.chat_input("Ask about business registration in Kenya...")
+    
+    with col2:
+        uploaded_file = st.file_uploader(
+            "📷",
+            type=["png", "jpg", "jpeg"],
+            label_visibility="collapsed",
+            help="Upload a screenshot of your issue"
+        )
+    
+    # Process input
+    if user_input or uploaded_file:
+        process_user_input(user_input or "", uploaded_file)
         st.rerun()
 
 

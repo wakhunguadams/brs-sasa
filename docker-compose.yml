@@ -1,37 +1,86 @@
-version: '3.8'
-
 services:
-  brs-sasa:
-    build: .
+  # API Service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brs-sasa-api
     ports:
       - "8000:8000"
     environment:
-      - DEBUG=${DEBUG:-false}
-      - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-gemini}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///./brs_sasa.db}
-      - VECTOR_DB_TYPE=${VECTOR_DB_TYPE:-chroma}
-      - CHROMA_PERSIST_DIR=/app/chroma_data
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DATABASE_URL=sqlite:///./data/brs_sasa.db
+      - CHROMA_PERSIST_DIR=./chroma_data
+      - LOG_LEVEL=INFO
+      - DEBUG=false
+    env_file:
+      - .env
     volumes:
-      - ./chroma_data:/app/chroma_data
       - ./data:/app/data
       - ./logs:/app/logs
-      - ./acts:/app/acts
-      - ./regulations:/app/regulations
-    depends_on:
-      - redis
+      - ./chroma_data:/app/chroma_data
+      - ./uploads:/app/uploads
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
+    networks:
+      - brs-network
 
-  redis:
-    image: redis:7-alpine
+  # User Interface Service
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brs-sasa-ui
     ports:
-      - "6379:6379"
+      - "8501:8501"
+    environment:
+      - API_BASE_URL=http://api:8000/api/v1/chat
+    env_file:
+      - .env
     volumes:
-      - redis_data:/data
+      - ./uploads:/app/uploads
+    command: streamlit run ui_demo.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
+    networks:
+      - brs-network
+
+  # CRM Dashboard Service
+  crm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brs-sasa-crm
+    ports:
+      - "8502:8502"
+    environment:
+      - DATABASE_URL=sqlite:///./data/brs_sasa.db
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: streamlit run crm_dashboard.py --server.address 0.0.0.0 --server.port 8502 --server.headless true
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - brs-network
+
+networks:
+  brs-network:
+    driver: bridge
 
 volumes:
-  redis_data:
+  data:
+  logs:
+  chroma_data:
+  uploads:

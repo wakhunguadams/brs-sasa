@@ -39,3 +39,25 @@ class FeedbackModel(Base):
     sentiment = Column(String, nullable=True)  # positive, negative, neutral, suggestion
     feedback_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class IssueReportModel(Base):
+    __tablename__ = "issue_reports"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True)
+    user_query = Column(Text, nullable=False)
+    screenshot_path = Column(String, nullable=True)
+    screenshot_url = Column(String, nullable=True)
+    extracted_text = Column(Text, nullable=True)
+    analysis_result = Column(JSON, nullable=True)
+    issue_type = Column(String, nullable=True)  # error, navigation, form, payment, other
+    status = Column(String, default="open")  # open, resolved, escalated
+    resolution = Column(Text, nullable=True)
+    escalated_to = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+    conversation = relationship("ConversationModel", back_populates="issue_reports")
+
+# Update ConversationModel to include relationship
+ConversationModel.issue_reports = relationship("IssueReportModel", back_populates="conversation", cascade="all, delete-orphan")
